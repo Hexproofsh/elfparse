@@ -146,6 +146,16 @@ elfparse_str_type:   .asciz "\n  Type: "
 elfparse_str_class:  .asciz "\n  Class: "
 elfparse_str_data:   .asciz "\n  Data: "
 elfparse_str_abi:    .asciz "\n  ABI: "
+elfparse_str_abiver: .asciz "\n  ABI Version: "
+elfparse_str_filever: .asciz "\n  File Version: "
+elfparse_str_phdroff: .asciz "\n  Program header offset: 0x"
+elfparse_str_shdroff: .asciz "\n  Section header offset: 0x"
+elfparse_str_ehdrsiz: .asciz "\n  ELF header size (bytes): "
+elfparse_str_phdrsiz: .asciz "\n  Program header size (bytes): "
+elfparse_str_phdrcnt: .asciz "\n  Program header count: "
+elfparse_str_shdrsiz:  .asciz "\n  Section header size (bytes): "
+elfparse_str_shdrcnt:  .asciz "\n  Section header count: "
+elfparse_str_shdrstrtbl: .asciz "\n  Section header string table index: "
 
 elfparse_str_abi_none:    .asciz "UNIX System V ABI"
 elfparse_str_abi_netbsd:  .asciz "NetBSD"
@@ -184,6 +194,7 @@ elfverify_read_error:
 
 .lcomm elfobj, 8
 .lcomm hexbuff, 16
+.lcomm intbuff, 21
 
 # ------------ Text ------------
     .globl _start
@@ -310,6 +321,51 @@ uint64_to_hex:
    pop     %rbx
    pop     %rbp
    ret
+
+uint64_to_ascii:
+    # Convert unsigned 64-bit integer to ASCII
+    # Input: %rax = integer value, %rsi = buffer pointer
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    mov %rsi, %rbx       # Save original buffer pointer
+    mov $10, %rcx
+    add $20, %rsi        # Move to end of buffer
+    mov %rsi, %r12       # Save end of buffer pointer
+
+    # Null-terminate the string
+    movb $0, (%rsi)
+
+.convert_loop:
+    xor %rdx, %rdx
+    div %rcx             # Divide rax by 10
+    add $'0', %dl        # Convert remainder to ASCII
+    dec %rsi
+    mov %dl, (%rsi)      # Store ASCII char
+    test %rax, %rax
+    jnz .convert_loop
+
+    # Move the string to the beginning of the buffer if necessary
+    cmp %rbx, %rsi
+    je .done
+
+    # Inline string move
+    mov %rsi, %rcx       # Source
+    mov %rbx, %rdx       # Destination
+.move_loop:
+    movb (%rcx), %al
+    movb %al, (%rdx)
+    inc %rcx
+    inc %rdx
+    cmp %r12, %rcx
+    jle .move_loop
+
+.done:
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
 
 load_elf64_file:
    # Read in the ehdr, phdr and shdr of the binary
@@ -595,6 +651,123 @@ parse_elf64_ehdr:
    call    print_str
 
 .L_print_abi_version:
+   
+   # Print ABI Version
+   lea     elfparse_str_abiver, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_ident + EI_ABIVERSION, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str     
+
+.L_print_file_version:
+
+   lea     elfparse_str_filever, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_ident + EI_VERSION, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
+
+.L_print_phdr_offset:
+ 
+   lea     elfparse_str_phdroff, %rdi
+   call    print_str
+
+   mov     ehdr + e_phoff, %rsi
+   lea     hexbuff, %rdi
+   call    uint64_to_hex
+   lea     hexbuff, %rdi
+   call    print_str
+
+.L_print_shdr_offset:
+   
+   lea     elfparse_str_shdroff, %rdi
+   call    print_str
+
+   mov     ehdr + e_shoff, %rsi
+   lea     hexbuff, %rdi
+   call    uint64_to_hex
+   lea     hexbuff, %rdi
+   call    print_str
+
+.L_print_ehdr_size:
+
+   lea     elfparse_str_ehdrsiz, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_ehsize, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
+
+.L_print_phdr_size:
+
+   lea     elfparse_str_phdrsiz, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_phentsize, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
+
+.L_print_phdr_count:
+
+   lea     elfparse_str_phdrcnt, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_phnum, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
+
+.L_print_shdr_size:
+
+   lea     elfparse_str_shdrsiz, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_shentsize, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
+
+.L_print_shdr_count:
+
+   lea     elfparse_str_shdrcnt, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_shnum, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
+
+.L_print_strtbl_index:
+
+   lea     elfparse_str_shdrstrtbl, %rdi
+   call    print_str
+
+   xor     %rax, %rax
+   movzbq  ehdr + e_shstrndx, %rax
+   lea     intbuff, %rsi
+   call    uint64_to_ascii
+   lea     intbuff, %rdi
+   call    print_str
 
    mov     $0, %rax
    ret

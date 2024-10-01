@@ -15,7 +15,7 @@ $ ./elfparse camel
 Binary is a valid 64-BIT ELF file
 
 ELF Header:
-  Enter Point: 0x0000000000401000
+  Entry Point: 0x0000000000401000
   Class: ELF64
   Type: Executable file
   Data: 2's complement, little endian

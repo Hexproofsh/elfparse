@@ -141,7 +141,7 @@ elfparse_verify_valid:
 
 # ELF parser output messages
 elfparse_str_ehdr:   .asciz "\nELF Header:\n"
-elfparse_str_entry:  .asciz "  Enter Point: 0x"
+elfparse_str_entry:  .asciz "  Entry Point: 0x"
 elfparse_str_type:   .asciz "\n  Type: "
 elfparse_str_class:  .asciz "\n  Class: "
 elfparse_str_data:   .asciz "\n  Data: "

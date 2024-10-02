@@ -241,6 +241,10 @@ _start:
     cmp    $0, %rax
     jne    .L_elfparse_error
 
+    call   load_shstrtab
+    cmp    $0, %rax
+    jl     .L_elfparse_error
+
     # Print ehdr
     call   parse_elf64_ehdr
     cmp    $0, %rax
@@ -422,6 +426,60 @@ uint64_to_ascii:
     pop    %rbp
     ret
 
+load_shstrtab:
+    push   %rbp
+    mov    %rsp, %rbp
+
+    movzwl ehdr + e_shstrndx, %eax
+    imul   $elf64_shdr_size, %rax
+    lea    shdr, %rdx
+    add    %rax, %rdx
+    
+    mov    sh_offset(%rdx), %r13 
+    mov    sh_size(%rdx), %r12   
+
+    xor    %rdi, %rdi
+    mov    %r12, %rsi    
+    mov    $(PROT_READ | PROT_WRITE), %rdx
+    mov    $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
+    mov    $-1, %r8
+    xor    %r9, %r9
+    mov    $__NR_mmap, %rax
+    syscall
+
+    cmp    $-1, %rax
+    je     .L_mmap_error
+    mov    %rax, shstrtab
+
+    # Seek to the string table offset
+    mov    elfobj, %rdi
+    mov    %r13, %rsi           # Use sh_offset for seeking
+    xor    %rdx, %rdx
+    mov    $__NR_lseek, %rax
+    syscall
+
+    # Read the string table
+    mov    elfobj, %rdi
+    mov    shstrtab, %rsi
+    mov    %r12, %rdx           # Use sh_size for reading
+    mov    $__NR_read, %rax
+    syscall
+
+    cmp    %r12, %rax
+    jne    .L_read_error
+
+    mov    shstrtab, %rax
+    jmp    .L_cleanup
+
+.L_mmap_error:
+.L_read_error:
+    mov    $-1, %rax
+
+.L_cleanup:
+    mov    %rbp, %rsp
+    pop    %rbp
+    ret
+
 load_elf64_file:
    # Read in the ehdr, phdr and shdr of the binary
    # %rdi contains the address of the file name
@@ -488,7 +546,7 @@ load_elf64_file:
    # Save current file position
    mov     elfobj, %rdi
    xor     %rsi, %rsi
-   mov     $1, %rdx        # SEEK_CUR
+   mov     $1, %rdx     
    mov     $__NR_lseek, %rax
    syscall
    push    %rax            # Save current position
@@ -517,14 +575,14 @@ load_elf64_file:
    mov     %rax, shdr
  
    mov     elfobj, %rdi
-   mov     shdr, %rsi      # Use the pointer returned by mmap
+   lea     shdr, %rsi    
    pop     %rdx
    mov     $__NR_read, %rax
    syscall
 
    mov     elfobj, %rdi
    pop     %rsi
-   xor     %rdx, %rdx      # SEEK_SET
+   xor     %rdx, %rdx  
    mov     $__NR_lseek, %rax
    syscall
 
@@ -908,7 +966,7 @@ parse_elf64_phdr:
 
    push    %rcx
    push    %rdx
-   mov     p_offset(%rdx), %rsi  # Load p_offset into %rsi
+   mov     p_offset(%rdx), %rsi
 
    mov     elfobj, %rdi        
    xor     %rdx, %rdx            
@@ -943,5 +1001,43 @@ parse_elf64_sections:
    lea     elfparse_str_shdr, %rdi
    call    print_str
 
-   xor     %rax, %rax
+   xor     %rbx, %rbx
+   movzwl  ehdr + e_shnum, %ebx
+   mov     $1, %rcx
+
+.L_loop_sections:
+   cmp     %ebx, %ecx
+   je      .L_exit_parse_sections
+
+   lea     elfparse_str_shdr_beg, %rdi
+   call    print_str
+
+   mov     %rcx, %rax
+   imul    $elf64_shdr_size, %rax
+   lea     shdr, %rdx
+   add     %rax, %rdx
+
+   mov     shstrtab, %rdi
+
+   mov     sh_name(%rdx), %esi
+   add     %rsi, %rdi
+
+   # Print section name
+   call    print_str
+
+   # Print address
+   lea     elfparse_str_shdr_space, %rdi
+   call    print_str
+
+   mov     sh_addr(%rdx), %rsi
+   lea     hexbuff, %rdi
+   call    uint64_to_hex
+   lea     hexbuff, %rdi
+   call    print_str
+    
+   inc     %rcx
+   jmp     .L_loop_sections
+ 
+.L_exit_parse_sections:
+   mov     $0, %rax
    ret

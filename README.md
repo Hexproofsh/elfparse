@@ -8,7 +8,7 @@ Usage:
 GNU ELF64 Parser
 usage: elfparse [file]
 ```
-Current printing the Elf64_Ehdr information:
+Example output:
 
 ```
 $ ./elfparse camel
@@ -31,13 +31,38 @@ ELF Header:
   Section header count: 31
   Section header string table index: 30
 Program headers:
-  Interpreter: /lib64/ld-linux-x86-64.so.2
-  .text    0x00000000000007C0
-  .data    0x0000000000001000
-  .data    0x0000000000002000
-  .data    0x0000000000003DA8
-  Dynamic segment: 0x0000000000003DB8
-  Note segment: 0x0000000000000338
-  Note segment: 0x0000000000000368
+  Interpreter: 
+  Dynamic segment: 0x00000000000003B0
+  .text    0x6FFFFFFF00000071
 Section headers:
+  .interp    0x0000000000000318
+  .note.gnu.property    0x0000000000000338
+  .note.gnu.build-id    0x0000000000000368
+  .note.ABI-tag    0x000000000000038C
+  .gnu.hash    0x00000000000003B0
+  .dynsym    0x00000000000003D8
+  .dynstr    0x00000000000004B0
+  .gnu.version    0x0000000000000562
+  .gnu.version_r    0x0000000000000578
+  .rela.dyn    0x00000000000005B8
+  .rela.plt    0x0000000000000678
+  .init    0x0000000000001000
+  .plt    0x0000000000001020
+  .plt.got    0x0000000000001060
+  .plt.sec    0x0000000000001070
+  .text    0x00000000000010A0
+  .fini    0x0000000000001250
+  .rodata    0x0000000000002000
+  .eh_frame_hdr    0x0000000000002008
+  .eh_frame    0x0000000000002040
+  .init_array    0x0000000000003DA8
+  .fini_array    0x0000000000003DB0
+  .dynamic    0x0000000000003DB8
+  .got    0x0000000000003FA8
+  .data    0x0000000000004000
+  .bss    0x0000000000004010
+  .comment    0x0000000000000000
+  .symtab    0x0000000000000000
+  .strtab    0x0000000000000000
+  .shstrtab    0x0000000000000000
 ```

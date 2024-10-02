@@ -1,3 +1,4 @@
+# -----------------------------------------------------------------------------
 # elfparse.s - GNU ELF64 Parser
 #
 # Usage: elfparse [file]
@@ -15,6 +16,9 @@
 
 # You should have received a copy of the GNU General Public License along with 
 # this program. If not, see <https://www.gnu.org/licenses/>.
+# -----------------------------------------------------------------------------
+.title               "elfparse.s"
+.version             "1"
 
 # ------------ Constants ------------
 
@@ -76,6 +80,12 @@
 .set ET_EXEC,        2
 .set ET_DYN,         3
 .set ET_CORE,        4
+
+.set PT_LOAD,        1
+.set PT_DYNAMIC,     2
+.set PT_INTERP,      3
+.set PT_NOTE,        4
+.set PT_PHDR,        5
 
 # ------------ ELF Structures ------------
  
@@ -178,6 +188,18 @@ elfparse_str_type_dyn:  .asciz "Shared object file"
 elfparse_str_type_core: .asciz "Core file"
 elfparse_str_type_unkn: .asciz "Unknown"
 
+elfparse_str_phdr:      .asciz "\nProgram headers:"
+elfparse_str_ptloadtxt: .asciz "\n  .text    0x"
+elfparse_str_ptloaddat: .asciz "\n  .data    0x"
+elfparse_str_progseg:   .asciz "\n  Program segment: 0x"
+elfparse_str_dynseg:    .asciz "\n  Dynamic segment: 0x"
+elfparse_str_noteseg:   .asciz "\n  Note segment: 0x"
+elfparse_str_interp:    .asciz "\n  Interpreter: "
+
+elfparse_str_shdr:      .asciz "\nSection headers:"
+elfparse_str_shdr_beg:  .asciz "\n  "
+elfparse_str_shdr_space: .asciz "    0x"
+
 # Errors
 elfparse_invalid_file:
     .asciz "Error: Unable to open file\n"
@@ -193,7 +215,7 @@ elfverify_read_error:
 .lcomm shdr_size, 8
 
 .lcomm elfobj, 8
-.lcomm hexbuff, 16
+.lcomm hexbuff, 17
 .lcomm intbuff, 21
 
 # ------------ Text ------------
@@ -219,6 +241,14 @@ _start:
 
     # Print ehdr
     call   parse_elf64_ehdr
+    cmp    $0, %rax
+    jl     .L_elfparse_exit
+
+    # Print all phdr[x] names/addresses. This also calls the function to
+    # print out sectio headers information.
+    call   parse_elf64_phdr
+    cmp    $0, %rax
+    jl     .L_elfparse_exit
 
 .L_elfparse_exit:
     mov    phdr, %r10
@@ -268,103 +298,121 @@ _start:
 # loop that iterates through the functions and
 # prints error messages based on the return value 
 print_str:
-   # Print a string to STDOUT = 1
-   # %rdi holds the address of the string
-   #
-   # We need to find the length of the string first and then print using
-   # syscall __NR_write (sys_write) 
-   xor     %rcx, %rcx
+    # Print a string to STDOUT = 1
+    # %rdi holds the address of the string
+    #
+    # We need to find the length of the string first and then print using
+    # syscall __NR_write (sys_write) 
+    push   %rcx
+    push   %rax
+    push   %rdx
+
+    xor    %rcx, %rcx
 .L_strlen:
-   movb    (%rdi, %rcx), %al
-   test    %al, %al
-   jz      .L_write
-   inc     %rcx
-   jmp     .L_strlen
+    movb   (%rdi, %rcx), %al
+    test   %al, %al
+    jz     .L_write
+    inc    %rcx
+    jmp    .L_strlen
 .L_write:
-   # At this point %rcx holds the length of the null terminated string
-   mov     %rcx, %rdx
-   mov     %rdi, %rsi
-   mov     $STDOUT, %rdi
-   mov     $__NR_write, %rax
-   syscall
-   ret
+    # At this point %rcx holds the length of the null terminated string
+    mov    %rcx, %rdx
+    mov    %rdi, %rsi
+    mov    $STDOUT, %rdi
+    mov    $__NR_write, %rax
+    syscall
+
+    pop    %rdx
+    pop    %rax
+    pop    %rcx
+    ret
 
 uint64_to_hex:
-   # Converts our uint64_t addresses to a string
-   # %rsi the address to convert
-   # %rdi the output buffer
-   push    %rbp
-   mov     %rsp, %rbp
-   push    %rbx              # We'll use %rbx, so preserve it
+    # label is misleading its uint64_to_hex_string
+    # Converts our uint64_t addresses to a string
+    # %rsi the address to convert
+    # %rdi the output buffer
+    push   %rbp
+    mov    %rsp, %rbp
+    push   %rbx
+    push   %rdx
+    push   %rcx
+    push   %rax
+    push   %rdi
 
-   mov     $15, %ecx          # Start with the rightmost character
-   mov     %rsi, %rax         # Copy input value to %rax
+    mov    $15, %ecx          # Start with the rightmost character
+    mov    %rsi, %rax
 
 .L_convert:
-   mov     %rax, %rdx
-   and     $0xf, %rdx         # Get least significant nibble
-   cmp     $10, %rdx
-   jae     .L_letter
+    mov    %rax, %rdx
+    and    $0xf, %rdx         # Get least significant nibble
+    cmp    $10, %rdx
+    jae    .L_letter
 
-   add     $'0', %rdx         # Convert to ASCII number
-   jmp     .L_save
+    add    $'0', %rdx         # Convert to ASCII number
+    jmp    .L_save
 
 .L_letter:
-   add    $('A' - 10), %rdx  # Convert to ASCII letter (A-F)
+    add    $('A' - 10), %rdx  # Convert to ASCII letter (A-F)
 
 .L_save:
-   mov     %dl, (%rdi, %rcx)  # Store ASCII char in buffer
-   shr     $4, %rax           # Shift out the processed nibble
-   dec     %ecx
-   jns     .L_convert      # Continue if not done with all 16 nibbles
+    mov    %dl, (%rdi, %rcx)  # Store ASCII char in buffer
+    shr    $4, %rax           # Shift out the processed nibble
+    dec    %ecx
+    jns    .L_convert     
 
-   pop     %rbx
-   pop     %rbp
-   ret
+    pop    %rdi
+    pop    %rax
+    pop    %rcx
+    pop    %rdx
+    pop    %rbx
+    pop    %rbp
+    ret
 
 uint64_to_ascii:
     # Convert unsigned 64-bit integer to ASCII
-    # Input: %rax = integer value, %rsi = buffer pointer
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    mov %rsi, %rbx       # Save original buffer pointer
-    mov $10, %rcx
-    add $20, %rsi        # Move to end of buffer
-    mov %rsi, %r12       # Save end of buffer pointer
+    # %rax = integer
+    # %rsi = buffer pointer
+    push   %rbp
+    mov    %rsp, %rbp
+    push   %rbx
+    push   %r12
+    mov    %rsi, %rbx       # Save original buffer pointer
+    mov    $10, %rcx
+    add    $20, %rsi        # Move to end of buffer
+    mov    %rsi, %r12       # Save end of buffer pointer
 
     # Null-terminate the string
-    movb $0, (%rsi)
+    movb   $0, (%rsi)
 
-.convert_loop:
-    xor %rdx, %rdx
-    div %rcx             # Divide rax by 10
-    add $'0', %dl        # Convert remainder to ASCII
-    dec %rsi
-    mov %dl, (%rsi)      # Store ASCII char
-    test %rax, %rax
-    jnz .convert_loop
+.L_convert_digit:
+    xor    %rdx, %rdx
+    div    %rcx             # Divide rax by 10
+    add    $'0', %dl        # Convert remainder to ASCII
+    dec    %rsi
+    mov    %dl, (%rsi)      # Store ASCII char
+    test   %rax, %rax
+    jnz    .L_convert_digit
 
     # Move the string to the beginning of the buffer if necessary
-    cmp %rbx, %rsi
-    je .done
+    cmp    %rbx, %rsi
+    je     .L_done_to_ascii
 
     # Inline string move
-    mov %rsi, %rcx       # Source
-    mov %rbx, %rdx       # Destination
-.move_loop:
-    movb (%rcx), %al
-    movb %al, (%rdx)
-    inc %rcx
-    inc %rdx
-    cmp %r12, %rcx
-    jle .move_loop
+    mov    %rsi, %rcx       # Source
+    mov    %rbx, %rdx       # Destination
+.L_strcpy:
+    movb   (%rcx), %al
+    movb   %al, (%rdx)
+    inc    %rcx
+    inc    %rdx
+    cmp    %r12, %rcx
+    jle    .L_strcpy
 
-.done:
-    pop %r12
-    pop %rbx
-    pop %rbp
+.L_done_to_ascii:
+    pop    %r12
+    pop    %rbx
+    pop    %rbp
     ret
 
 load_elf64_file:
@@ -770,4 +818,78 @@ parse_elf64_ehdr:
    call    print_str
 
    mov     $0, %rax
+   ret
+
+parse_elf64_phdr:
+   # Parse the Program header information. Iterate each phdr
+   # and print out sections and offset. PT_INTERP we print
+# the interpreter
+   lea     elfparse_str_phdr, %rdi
+   call    print_str
+   xor     %rcx, %rcx         # our index into phdr
+   movzwl  ehdr + e_phnum, %ebx  # holds e_phnum value
+.L_loop_section:
+   cmp     %ecx, %ebx
+   je      .L_exit_parse_phdr
+   
+   mov     %rcx, %rax
+   imul    $elf64_phdr_size, %rax
+   lea     phdr, %rdx
+   add     %rax, %rdx
+   mov     p_type(%rdx), %eax
+   
+   cmp     $PT_LOAD, %eax
+   je      .L_print_ptload
+   cmp     $PT_PHDR, %eax
+   je      .L_print_ptphdr
+   cmp     $PT_DYNAMIC, %eax
+   je      .L_print_ptdyn
+   cmp     $PT_NOTE, %eax
+   je      .L_print_ptnote
+   cmp     $PT_INTERP, %eax
+   je      .L_print_ptinterp
+   
+   # Any other section we just loop
+   inc     %rcx
+   jmp     .L_loop_section
+.L_print_phdr_addr:
+   # This prints out the phdr[i].p_vaddr
+   mov     p_vaddr(%rdx), %rsi
+   lea     hexbuff, %rdi
+   call    uint64_to_hex
+   lea     hexbuff, %rdi
+   call    print_str
+   inc     %rcx
+   jmp     .L_loop_section
+.L_print_ptload:
+   # Print out PT_LOAD .text and .data segment addresses
+   mov     p_offset(%rdx), %r10
+   test    %r10, %r10
+   jz      .L_ptload_text
+   lea     elfparse_str_ptloaddat, %rdi
+   call    print_str
+   jmp     .L_print_phdr_addr
+.L_ptload_text:
+   lea     elfparse_str_ptloadtxt, %rdi
+   call    print_str
+   jmp     .L_print_phdr_addr
+.L_print_ptdyn:
+   lea     elfparse_str_dynseg, %rdi
+   call    print_str
+   jmp     .L_print_phdr_addr
+.L_print_ptnote:
+   lea     elfparse_str_noteseg, %rdi
+   call    print_str
+   jmp     .L_print_phdr_addr
+.L_print_ptinterp:
+   lea     elfparse_str_interp, %rdi
+   call    print_str
+   inc     %rcx
+   jmp     .L_loop_section
+.L_print_ptphdr:
+   lea     elfparse_str_progseg, %rdi
+   call    print_str
+   jmp     .L_print_phdr_addr
+.L_exit_parse_phdr:
+   xor     %rax, %rax
    ret

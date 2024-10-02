@@ -823,10 +823,10 @@ parse_elf64_ehdr:
 parse_elf64_phdr:
    # Parse the Program header information. Iterate each phdr
    # and print out sections and offset. PT_INTERP we print
-# the interpreter
+   # the interpreter
    lea     elfparse_str_phdr, %rdi
    call    print_str
-   xor     %rcx, %rcx         # our index into phdr
+   xor     %rcx, %rcx            # our index into phdr
    movzwl  ehdr + e_phnum, %ebx  # holds e_phnum value
 .L_loop_section:
    cmp     %ecx, %ebx

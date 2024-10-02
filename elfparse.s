@@ -207,16 +207,18 @@ elfparse_invalid_file:
 elfverify_read_error:
     .asciz "Error: Unable to read ELF64 header\n"
 
+.lcomm shstrtab, 8
+.lcomm elfobj, 8
+.lcomm hexbuff, 17
+.lcomm intbuff, 21
+.lcomm interp_path, 256
+
 # These are initialized in .bss
 .lcomm ehdr, elf64_ehdr_size
 .lcomm phdr, elf64_phdr_size
 .lcomm phdr_size, 8
 .lcomm shdr, elf64_shdr_size
 .lcomm shdr_size, 8
-
-.lcomm elfobj, 8
-.lcomm hexbuff, 17
-.lcomm intbuff, 21
 
 # ------------ Text ------------
     .globl _start
@@ -250,6 +252,7 @@ _start:
     cmp    $0, %rax
     jl     .L_elfparse_exit
 
+    call   parse_elf64_sections
 .L_elfparse_exit:
     mov    phdr, %r10
     test   %r10, %r10
@@ -267,6 +270,10 @@ _start:
     mov    $__NR_munmap, %rax
     syscall
 .L_exit_final: 
+    mov    elfobj, %rdi
+    mov    $__NR_close, %rax
+    syscall
+    
     # Call the exit syscall
     # exit(0)
     xor    %rdi, %rdi
@@ -477,12 +484,26 @@ load_elf64_file:
    pop     %rdx
    mov     $__NR_read, %rax
    syscall
+ 
+   # Save current file position
+   mov     elfobj, %rdi
+   xor     %rsi, %rsi
+   mov     $1, %rdx        # SEEK_CUR
+   mov     $__NR_lseek, %rax
+   syscall
+   push    %rax            # Save current position
+
+   # Seek to section header offset
+   mov     elfobj, %rdi
+   mov     ehdr + e_shoff, %rsi
+   xor     %rdx, %rdx      # SEEK_SET
+   mov     $__NR_lseek, %rax
+   syscall
    
    movzwq  ehdr + e_shnum, %rsi
    imul    $elf64_shdr_size, %rsi
    push    %rsi
    mov     %rsi, shdr_size
-
    mov     %rsi, %rdx
    xor     %rdi, %rdi
    mov     $(PROT_READ | PROT_WRITE), %rsi
@@ -491,29 +512,28 @@ load_elf64_file:
    xor     %r9, %r9
    mov     $__NR_mmap, %rax
    syscall
-
    cmp     $-1, %rax
    je      .L_load_error
-
    mov     %rax, shdr
  
-   # Read section headers to the allocated memopry
    mov     elfobj, %rdi
-   lea     shdr, %rsi
+   mov     shdr, %rsi      # Use the pointer returned by mmap
    pop     %rdx
    mov     $__NR_read, %rax
    syscall
 
-   #Close our file 
-   #close(unsigned int fd)
-   mov elfobj, %rdi
-   mov $__NR_close, %rax
+   mov     elfobj, %rdi
+   pop     %rsi
+   xor     %rdx, %rdx      # SEEK_SET
+   mov     $__NR_lseek, %rax
    syscall
-   
+
    mov     $0, %rax
    jmp     .L_load_cleanup
+
 .L_load_error:
    mov     $-1, %rax
+
 .L_load_cleanup:
    pop     %rdi
    mov     %rbp, %rsp
@@ -882,8 +902,33 @@ parse_elf64_phdr:
    call    print_str
    jmp     .L_print_phdr_addr
 .L_print_ptinterp:
+   # If there is a PT_INTERP we print the interpreter
    lea     elfparse_str_interp, %rdi
    call    print_str
+
+   push    %rcx
+   push    %rdx
+   mov     p_offset(%rdx), %rsi  # Load p_offset into %rsi
+
+   mov     elfobj, %rdi        
+   xor     %rdx, %rdx            
+   mov     $__NR_lseek, %rax    
+   syscall
+
+   pop     %rdx
+   mov     elfobj, %rdi         
+   lea     interp_path, %rsi     
+   mov     p_filesz(%rdx), %rdx  
+   mov     $__NR_read, %rax      
+   syscall
+
+   mov     %rax, %rcx            
+   movb    $0, interp_path(%rcx) 
+
+   lea     interp_path, %rdi
+   call    print_str
+
+   pop     %rcx
    inc     %rcx
    jmp     .L_loop_section
 .L_print_ptphdr:
@@ -891,5 +936,12 @@ parse_elf64_phdr:
    call    print_str
    jmp     .L_print_phdr_addr
 .L_exit_parse_phdr:
+   xor     %rax, %rax
+   ret
+
+parse_elf64_sections:
+   lea     elfparse_str_shdr, %rdi
+   call    print_str
+
    xor     %rax, %rax
    ret

@@ -148,7 +148,18 @@ elf64_shdr_size:
 
 elfparse_usage:
     .ascii "GNU ELF64 Parser\n"
-    .asciz "usage: elfparse [file]\n"
+    .ascii "usage: elfparse <option(s)> [file]\n"
+    .ascii "  -a       all - prints header, program headers, sections\n"
+    .ascii "  -h       prints the elf header\n"
+    .ascii "  -p       prints program header information\n"
+    .ascii "  -s       prints section names and addresses\n\n"
+    .asciz "See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh\n"
+
+# Program options for parsing the command line
+option_a: .asciz "-a"
+option_h: .asciz "-h"
+option_p: .asciz "-p"
+option_s: .asciz "-s"
 
 elfparse_verify_valid:
     .asciz "Binary is a valid 64-BIT ELF file\n"
@@ -171,20 +182,24 @@ elfparse_str_shdrsiz:  .asciz "\n  Section header size (bytes): "
 elfparse_str_shdrcnt:  .asciz "\n  Section header count: "
 elfparse_str_shdrstrtbl: .asciz "\n  Section header string table index: "
 
+# ABI messages
 elfparse_str_abi_none:    .asciz "UNIX System V ABI"
 elfparse_str_abi_netbsd:  .asciz "NetBSD"
 elfparse_str_abi_linux:   .asciz "GNU\Linux"
 elfparse_str_abi_freebsd: .asciz "FreeBSD"
 elfparse_str_abi_openbsd: .asciz "OpenBSD"
 
+# EI_DATA messages
 elfparse_str_data_none:   .asciz "Invalid data encoding"
 elfparse_str_data_2LSB:   .asciz "2's complement, little endian"
 elfparse_str_data_2MSB:   .asciz "2's complement, big endian"
 
+# EI_CLASS messages
 elfparse_str_class_32:    .asciz "ELF32"
 elfparse_str_class_64:    .asciz "ELF64"
 elfparse_str_class_none:  .asciz "Invalid type"
 
+# e_type messages
 elfparse_str_type_none: .asciz "No file type"
 elfparse_str_type_rel:  .asciz "Relocatable file"
 elfparse_str_type_exec: .asciz "Executable file"
@@ -192,6 +207,7 @@ elfparse_str_type_dyn:  .asciz "Shared object file"
 elfparse_str_type_core: .asciz "Core file"
 elfparse_str_type_unkn: .asciz "Unknown"
 
+# Program header messages
 elfparse_str_phdr:      .asciz "\nProgram headers:"
 elfparse_str_ptloadtxt: .asciz "\n  .text    0x"
 elfparse_str_ptloaddat: .asciz "\n  .data    0x"
@@ -200,6 +216,8 @@ elfparse_str_dynseg:    .asciz "\n  Dynamic segment: 0x"
 elfparse_str_noteseg:   .asciz "\n  Note segment: 0x"
 elfparse_str_interp:    .asciz "\n  Interpreter: "
 
+# Section header messages. We use *shdr_beg to begin the line to give the
+# section name some space and then *shdr_space to print before the p_vaddr
 elfparse_str_shdr:      .asciz "\nSection headers:"
 elfparse_str_shdr_beg:  .asciz "\n  "
 elfparse_str_shdr_space: .asciz "    0x"
@@ -220,8 +238,12 @@ elfverify_read_error:
 
 # We don't mmap ehdr, but phdr, shdr are pointers returned from mmap
 .lcomm ehdr, elf64_ehdr_size
+
+.align 8
 .lcomm phdr, 8
 .lcomm phdr_size, 8
+
+.align 8
 .lcomm shdr, 8
 .lcomm shdr_size, 8
 
@@ -230,26 +252,84 @@ elfverify_read_error:
     .section .text
 
 _start:
-    mov    (%rsp), %rbx         # %rsp = argc
-    cmp    $2, %rbx             # We should have atleast 1 command line arg
+    mov    (%rsp), %r12         # %rsp = argc
+    cmp    $3, %r12             # We should have atleast 2 command line arg
     jl     .L_elfparse_usage 
 
 .L_elfparse_args:
-    # We only need the first argument which specifies a file name to parse
-    # this puts the address of argv[1] in %rdi
+    # Our usage allows us to specifiy any of the arguments in any order to print out
+    # various info about the ELF file. The only exception is -a can be the only option
+    # as it just prints out all the information.
     #
     # This will iterate through all the functions to parse and print the
     # elf headers. See functions section for more information.
-    mov    16(%rsp), %rdi
+    lea    16(%rsp), %r13                # Pointer to the first argument argv[1]
+    mov    %r12, %rax
+    dec    %rax
+    mov    8(%rsp, %rax, 8), %rdi         # Pointer to the last argument, filename
 
+    # The options are processed on the file, so we need to be able to load the data we need first
+    # and then loop through all the options.
     call   load_elf64_file
     cmp    $0, %rax
-    jne    .L_elfparse_error
+    jl    .L_elfparse_error
 
+    # Load the symbol table
     call   load_shstrtab
     cmp    $0, %rax
     jl     .L_elfparse_error
 
+    # -a will print out all data so we will handle it and then exit if it is found
+    mov    (%r13), %rdi
+    lea    option_a, %rsi
+    call   str_cmp
+    test   %eax, %eax
+    jz     .L_print_all_data
+    
+    mov    $1, %r15             # %r15 will hold the option counter and we use $1 to bypass program name    
+.L_parse_options:
+    cmp    %r12, %r15
+    je     .L_elfparse_exit
+
+    mov    (%r13), %rdi
+    call   .L_process_options
+
+.L_next_option:
+    add    $8, %r13
+    inc    %r15
+    jmp    .L_parse_options
+.L_process_options:
+    mov    %rdi, %r10           # Save the original argument pointer in %r10
+    lea    option_h, %rsi
+    call   str_cmp
+    test   %eax, %eax
+    jz     .L_print_ehdr_data
+
+    mov    %r10, %rdi
+    lea    option_p, %rsi
+    call   str_cmp
+    test   %eax, %eax
+    jz     .L_print_phdr_data
+
+    mov    %r10, %rdi
+    push   %rdi
+    lea    option_s, %rsi
+    call   str_cmp
+    test   %eax, %eax
+    jz     .L_print_shdr_data
+
+    jmp    .L_elfparse_exit
+
+.L_print_ehdr_data:
+    call   parse_elf64_ehdr
+    jmp    .L_next_option
+.L_print_phdr_data:
+    call   parse_elf64_phdr
+    jmp    .L_next_option
+.L_print_shdr_data:
+    call   parse_elf64_sections
+    jmp    .L_next_option
+.L_print_all_data:
     # Print ehdr
     call   parse_elf64_ehdr
     cmp    $0, %rax
@@ -260,7 +340,8 @@ _start:
     call   parse_elf64_phdr
     cmp    $0, %rax
     jl     .L_elfparse_exit
-
+   
+    # Print section information
     call   parse_elf64_sections
 .L_elfparse_exit:
     mov    phdr, %r10
@@ -341,6 +422,27 @@ print_str:
     pop    %rdx
     pop    %rax
     pop    %rcx
+    ret
+
+# String comparison utility function
+# %rdi string1
+# %rdi string2
+# %rax is return
+str_cmp:
+    xor    %eax, %eax
+.L_str_cmp_loop:
+    mov    (%rdi), %cl
+    cmp    (%rsi), %cl
+    jne    .L_str_cmp_end
+    test   %cl, %cl
+    jz     .L_str_cmp_end
+    inc    %rdi
+    inc    %rsi
+    jmp    .L_str_cmp_loop
+.L_str_cmp_end:
+    movzx  (%rdi), %eax
+    movzx  (%rsi), %ecx
+    sub    %ecx, %eax
     ret
 
 # label is misleading its uint64_to_hex_string
@@ -437,6 +539,8 @@ uint64_to_ascii:
 load_shstrtab:
     push   %rbp
     mov    %rsp, %rbp
+    push   %r13
+    push   %r12
 
     movzwl ehdr + e_shstrndx, %eax
     imul   $elf64_shdr_size, %rax
@@ -484,6 +588,8 @@ load_shstrtab:
     mov    $-1, %rax
 
 .L_cleanup:
+    pop    %r12
+    pop    %r13
     mov    %rbp, %rsp
     pop    %rbp
     ret

@@ -6,7 +6,15 @@ A simple ELF64 parser written in assembly that will output EHDR, PHDR and sectio
 Usage:
 ```
 GNU ELF64 Parser
-usage: elfparse [file]
+usage: elfparse <option(s)> [file]
+  -a       all - prints header, program headers, sections
+  -h       prints the elf header
+  -p       prints program header information
+  -s       prints section names and addresses
+
+See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh
+```
+
 ```
 Example output:
 

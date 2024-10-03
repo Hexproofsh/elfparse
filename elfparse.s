@@ -230,21 +230,21 @@ elfverify_read_error:
     .asciz "Error: Unable to read ELF64 header\n"
 
 # ------------ Uninitialized data ------------
-.lcomm shstrtab, 8
-.lcomm elfobj, 8
-.lcomm hexbuff, 17
-.lcomm intbuff, 21
+.lcomm shstrtab,    8
+.lcomm elfobj,      8
+.lcomm hexbuff,     17
+.lcomm intbuff,     21
 .lcomm interp_path, 256
 
 # We don't mmap ehdr, but phdr, shdr are pointers returned from mmap
 .lcomm ehdr, elf64_ehdr_size
 
 .align 8
-.lcomm phdr, 8
+.lcomm phdr,      8
 .lcomm phdr_size, 8
 
 .align 8
-.lcomm shdr, 8
+.lcomm shdr,      8
 .lcomm shdr_size, 8
 
 # ------------ Text ------------
@@ -295,8 +295,8 @@ _start:
     call   .L_process_options
 
 .L_next_option:
-    add    $8, %r13
-    inc    %r15
+    add    $8, %r13             # Increment to the next address for the next argument
+    inc    %r15                 
     jmp    .L_parse_options
 .L_process_options:
     mov    %rdi, %r10           # Save the original argument pointer in %r10
@@ -426,23 +426,27 @@ print_str:
 
 # String comparison utility function
 # %rdi string1
-# %rdi string2
+# %rsi string2
 # %rax is return
 str_cmp:
-    xor    %eax, %eax
+    xor    %rax, %rax
 .L_str_cmp_loop:
+    # Move a byte from the currently index %rdi and %rsi and compare them
+    # if they don't match then we don't have the same string.
     mov    (%rdi), %cl
     cmp    (%rsi), %cl
     jne    .L_str_cmp_end
-    test   %cl, %cl
+    test   %cl, %cl             # Test for null terminator (end of string)
     jz     .L_str_cmp_end
     inc    %rdi
     inc    %rsi
     jmp    .L_str_cmp_loop
 .L_str_cmp_end:
-    movzx  (%rdi), %eax
-    movzx  (%rsi), %ecx
-    sub    %ecx, %eax
+    # If strings are equal then we will return 0 else positive or negative
+    # depending which string is. We only care about testing 0 for the return.
+    movzx  (%rdi), %rax
+    movzx  (%rsi), %rcx
+    sub    %rcx, %rax
     ret
 
 # label is misleading its uint64_to_hex_string
@@ -542,7 +546,7 @@ load_shstrtab:
     push   %r13
     push   %r12
 
-    movzwl ehdr + e_shstrndx, %eax
+    movzw  ehdr + e_shstrndx, %rax
     imul   $elf64_shdr_size, %rax
     mov    shdr, %rdx
     add    %rax, %rdx
@@ -619,7 +623,9 @@ load_elf64_file:
 
     mov     %rax, elfobj                 # save file handle to elfobj
 
-    # Read in ehdr
+    # Read in ehdr. The reason we are not using MMAP for the ehdr is because we know
+    # there is only a single header so we don't need to allocate memory for X amount
+    # of headers. So we directly read it to the space we have allocated in .bss for it
     mov     %rax, %rdi
     lea     ehdr, %rsi
     mov     $elf64_ehdr_size, %rdx
@@ -628,6 +634,9 @@ load_elf64_file:
     cmp     $elf64_ehdr_size, %rax
     jne     .L_load_error
 
+    # Since we have loaded theehdr, before doing any more operations we go ahead and verify
+    # that this is a valid ELF64 binary. See function header for verify_elf64_file for what
+    # verification it does
     call    verify_elf64_file
     cmp     $0, %rax
     jne     .L_load_error
@@ -701,7 +710,7 @@ load_elf64_file:
     mov     $__NR_lseek, %rax
     syscall
 
-    mov     $0, %rax
+    xor     %rax, %rax
     jmp     .L_load_cleanup
 
 .L_load_error:
@@ -736,7 +745,7 @@ verify_elf64_file:
    lea     elfparse_verify_valid, %rdi
    call    print_str
 
-   mov     $0, %rax
+   xor     %rax, %rax
    ret
 .L_verify_error:
    mov     $-1, %rax
@@ -1017,7 +1026,7 @@ parse_elf64_ehdr:
    lea     intbuff, %rdi
    call    print_str
 
-   mov     $0, %rax
+   xor     %rax, %rax
    ret
 
 # Parse the Program header information. Iterate each phdr
@@ -1026,13 +1035,13 @@ parse_elf64_ehdr:
 parse_elf64_phdr:
    lea     elfparse_str_phdr, %rdi
    call    print_str
-   xor     %rcx, %rcx            # our index into phdr
-   movzwl  ehdr + e_phnum, %ebx  # holds e_phnum value
+   xor     %rcx, %rcx               # our index into phdr
+   movzw   ehdr + e_phnum, %rbx     # holds e_phnum value
 .L_loop_section:
-   cmp     %ecx, %ebx
+   cmp     %rcx, %rbx
    je      .L_exit_parse_phdr
    
-   mov     %rcx, %rax
+   mov     %rcx, %rax               # below we are essentially doing phdr[X].p_type where X = %rcx
    imul    $elf64_phdr_size, %rax
    mov     phdr, %rdx
    add     %rax, %rdx
@@ -1173,5 +1182,5 @@ parse_elf64_sections:
    jmp     .L_loop_sections
  
 .L_exit_parse_sections:
-   mov     $0, %rax
+   xor     %rax, %rax
    ret

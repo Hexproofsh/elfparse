@@ -15,7 +15,6 @@ usage: elfparse <option(s)> [file]
 See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh
 ```
 
-```
 Example output:
 
 ```

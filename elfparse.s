@@ -30,7 +30,6 @@
 .set STDOUT,         1
 .set O_RDONLY,       0
 
-.set SYS_MMAP,       9
 .set PROT_READ,      1
 .set PROT_WRITE,     2
 .set MAP_PRIVATE,    2
@@ -144,6 +143,7 @@ elf64_shdr:
 elf64_shdr_size:
 
 # ------------ Initialized data ------------
+
     .section .data
 
 elfparse_usage:
@@ -164,7 +164,7 @@ option_s: .asciz "-s"
 elfparse_verify_valid:
     .asciz "Binary is a valid 64-BIT ELF file\n"
 
-# ELF parser output messages
+# EHDR messages
 elfparse_str_ehdr:   .asciz "\nELF Header:\n"
 elfparse_str_entry:  .asciz "  Entry Point: 0x"
 elfparse_str_type:   .asciz "\n  Type: "
@@ -230,6 +230,7 @@ elfverify_read_error:
     .asciz "Error: Unable to read ELF64 header\n"
 
 # ------------ Uninitialized data ------------
+
 .lcomm shstrtab,    8
 .lcomm elfobj,      8
 .lcomm hexbuff,     17
@@ -248,12 +249,13 @@ elfverify_read_error:
 .lcomm shdr_size, 8
 
 # ------------ Text ------------
+
     .globl _start
     .section .text
 
 _start:
-    mov    (%rsp), %r12         # %rsp = argc
-    cmp    $3, %r12             # We should have atleast 2 command line arg
+    mov    (%rsp), %r12                     # %rsp = argc
+    cmp    $3, %r12                         # We should have atleast 2 command line arg
     jl     .L_elfparse_usage 
 
 .L_elfparse_args:
@@ -263,20 +265,20 @@ _start:
     #
     # This will iterate through all the functions to parse and print the
     # elf headers. See functions section for more information.
-    lea    16(%rsp), %r13                # Pointer to the first argument argv[1]
+    lea    16(%rsp), %r13                   # Pointer to the first argument argv[1]
     mov    %r12, %rax
     dec    %rax
-    mov    8(%rsp, %rax, 8), %rdi         # Pointer to the last argument, filename
+    mov    8(%rsp, %rax, 8), %rdi           # Pointer to the last argument, filename
 
     # The options are processed on the file, so we need to be able to load the data we need first
     # and then loop through all the options.
     call   load_elf64_file
-    cmp    $0, %rax
-    jl    .L_elfparse_error
+    test   %rax, %rax
+    jl     .L_elfparse_error
 
     # Load the symbol table
     call   load_shstrtab
-    cmp    $0, %rax
+    test   %rax, %rax
     jl     .L_elfparse_error
 
     # -a will print out all data so we will handle it and then exit if it is found
@@ -286,7 +288,7 @@ _start:
     test   %eax, %eax
     jz     .L_print_all_data
     
-    mov    $1, %r15             # %r15 will hold the option counter and we use $1 to bypass program name    
+    mov    $1, %r15                         # %r15 will hold the option counter and we use $1 to bypass program name    
 .L_parse_options:
     cmp    %r12, %r15
     je     .L_elfparse_exit
@@ -295,11 +297,11 @@ _start:
     call   .L_process_options
 
 .L_next_option:
-    add    $8, %r13             # Increment to the next address for the next argument
+    add    $8, %r13                         # Increment to the next address for the next argument
     inc    %r15                 
     jmp    .L_parse_options
 .L_process_options:
-    mov    %rdi, %r10           # Save the original argument pointer in %r10
+    mov    %rdi, %r10                       # Save the original argument pointer in %r10
     lea    option_h, %rsi
     call   str_cmp
     test   %eax, %eax
@@ -371,6 +373,8 @@ _start:
     syscall
 
 # ------------ Print statements to STDOUT  ------------
+
+# This should be an area to improve. Error handling.
 .L_elfparse_error:
     lea    elfparse_invalid_file, %rdi
     call   print_str
@@ -387,216 +391,6 @@ _start:
     jmp    .L_elfparse_exit
  
 # ------------ Elf Parser Functions  ------------ 
-# Each function should return:
-# success: %rax = 0
-# failure: %rax = -1
-#
-# This is checked in the main .L_elfparse_args
-# loop that iterates through the functions and
-# prints error messages based on the return value 
-print_str:
-    # Print a string to STDOUT = 1
-    # %rdi holds the address of the string
-    #
-    # We need to find the length of the string first and then print using
-    # syscall __NR_write (sys_write) 
-    push   %rcx
-    push   %rax
-    push   %rdx
-
-    xor    %rcx, %rcx
-.L_strlen:
-    movb   (%rdi, %rcx), %al
-    test   %al, %al
-    jz     .L_write
-    inc    %rcx
-    jmp    .L_strlen
-.L_write:
-    # At this point %rcx holds the length of the null terminated string
-    mov    %rcx, %rdx
-    mov    %rdi, %rsi
-    mov    $STDOUT, %rdi
-    mov    $__NR_write, %rax
-    syscall
-
-    pop    %rdx
-    pop    %rax
-    pop    %rcx
-    ret
-
-# String comparison utility function
-# %rdi string1
-# %rsi string2
-# %rax is return
-str_cmp:
-    xor    %rax, %rax
-.L_str_cmp_loop:
-    # Move a byte from the currently index %rdi and %rsi and compare them
-    # if they don't match then we don't have the same string.
-    mov    (%rdi), %cl
-    cmp    (%rsi), %cl
-    jne    .L_str_cmp_end
-    test   %cl, %cl             # Test for null terminator (end of string)
-    jz     .L_str_cmp_end
-    inc    %rdi
-    inc    %rsi
-    jmp    .L_str_cmp_loop
-.L_str_cmp_end:
-    # If strings are equal then we will return 0 else positive or negative
-    # depending which string is. We only care about testing 0 for the return.
-    movzx  (%rdi), %rax
-    movzx  (%rsi), %rcx
-    sub    %rcx, %rax
-    ret
-
-# label is misleading its uint64_to_hex_string
-# Converts our uint64_t addresses to a string
-# %rsi the address to convert
-# %rdi the output buffer
-uint64_to_hex:
-    push   %rbp
-    mov    %rsp, %rbp
-    push   %rbx
-    push   %rdx
-    push   %rcx
-    push   %rax
-    push   %rdi
-
-    mov    $15, %ecx          # Start with the rightmost character
-    mov    %rsi, %rax
-
-.L_convert:
-    mov    %rax, %rdx
-    and    $0xf, %rdx         # Get least significant nibble
-    cmp    $10, %rdx
-    jae    .L_letter
-
-    add    $'0', %rdx         # Convert to ASCII number
-    jmp    .L_save
-
-.L_letter:
-    add    $('A' - 10), %rdx  # Convert to ASCII letter (A-F)
-
-.L_save:
-    mov    %dl, (%rdi, %rcx)  # Store ASCII char in buffer
-    shr    $4, %rax           # Shift out the processed nibble
-    dec    %ecx
-    jns    .L_convert     
-
-    pop    %rdi
-    pop    %rax
-    pop    %rcx
-    pop    %rdx
-    pop    %rbx
-    pop    %rbp
-    ret
-
-# Convert unsigned 64-bit integer to ASCII
-# %rax = integer
-# %rsi = buffer pointer
-uint64_to_ascii:
-    push   %rbp
-    mov    %rsp, %rbp
-    push   %rbx
-    push   %r12
-    mov    %rsi, %rbx       # Save original buffer pointer
-    mov    $10, %rcx
-    add    $20, %rsi        # Move to end of buffer
-    mov    %rsi, %r12       # Save end of buffer pointer
-
-    # Null-terminate the string
-    movb   $0, (%rsi)
-
-.L_convert_digit:
-    xor    %rdx, %rdx
-    div    %rcx             # Divide rax by 10
-    add    $'0', %dl        # Convert remainder to ASCII
-    dec    %rsi
-    mov    %dl, (%rsi)      # Store ASCII char
-    test   %rax, %rax
-    jnz    .L_convert_digit
-
-    # Move the string to the beginning of the buffer if necessary
-    cmp    %rbx, %rsi
-    je     .L_done_to_ascii
-
-    # Inline string move
-    mov    %rsi, %rcx       # Source
-    mov    %rbx, %rdx       # Destination
-.L_strcpy:
-    movb   (%rcx), %al
-    movb   %al, (%rdx)
-    inc    %rcx
-    inc    %rdx
-    cmp    %r12, %rcx
-    jle    .L_strcpy
-
-.L_done_to_ascii:
-    pop    %r12
-    pop    %rbx
-    pop    %rbp
-    ret
-
-# We preload the string table. We need this for printing
-# the section information.
-# No input. This just must be called AFTER load_elf64_file
-load_shstrtab:
-    push   %rbp
-    mov    %rsp, %rbp
-    push   %r13
-    push   %r12
-
-    movzw  ehdr + e_shstrndx, %rax
-    imul   $elf64_shdr_size, %rax
-    mov    shdr, %rdx
-    add    %rax, %rdx
-    
-    mov    sh_offset(%rdx), %r13 
-    mov    sh_size(%rdx), %r12   
-
-    xor    %rdi, %rdi
-    mov    %r12, %rsi    
-    mov    $(PROT_READ | PROT_WRITE), %rdx
-    mov    $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
-    mov    $-1, %r8
-    xor    %r9, %r9
-    mov    $__NR_mmap, %rax
-    syscall
-
-    cmp    $-1, %rax
-    je     .L_mmap_error
-    mov    %rax, shstrtab
-
-    # Seek to the string table offset
-    mov    elfobj, %rdi
-    mov    %r13, %rsi           # Use sh_offset for seeking
-    xor    %rdx, %rdx
-    mov    $__NR_lseek, %rax
-    syscall
-
-    # Read the string table
-    mov    elfobj, %rdi
-    mov    shstrtab, %rsi
-    mov    %r12, %rdx           # Use sh_size for reading
-    mov    $__NR_read, %rax
-    syscall
-
-    cmp    %r12, %rax
-    jne    .L_read_error
-
-    mov    shstrtab, %rax
-    jmp    .L_cleanup
-
-.L_mmap_error:
-.L_read_error:
-    mov    $-1, %rax
-
-.L_cleanup:
-    pop    %r12
-    pop    %r13
-    mov    %rbp, %rsp
-    pop    %rbp
-    ret
 
 # Read in the ehdr, phdr and shdr of the binary
 # %rdi contains the address of the file name
@@ -621,7 +415,7 @@ load_elf64_file:
     cmp     $0, %rax
     jl      .L_load_error
 
-    mov     %rax, elfobj                 # save file handle to elfobj
+    mov     %rax, elfobj                    # save file handle to elfobj
 
     # Read in ehdr. The reason we are not using MMAP for the ehdr is because we know
     # there is only a single header so we don't need to allocate memory for X amount
@@ -643,7 +437,7 @@ load_elf64_file:
 
     # mmap for program headers
     movzwq  ehdr + e_phnum, %rsi
-    imul    $elf64_phdr_size, %rsi      # e_phnum * sizeof(Elf64_Phdr)
+    imul    $elf64_phdr_size, %rsi          # e_phnum * sizeof(Elf64_Phdr)
     mov     %rsi, phdr_size
     xor     %rdi, %rdi                
     mov     $(PROT_READ | PROT_WRITE), %rdx
@@ -668,15 +462,15 @@ load_elf64_file:
     # Save current file position
     mov     elfobj, %rdi
     xor     %rsi, %rsi
-    mov     $1, %rdx                    # SEEK_CUR
+    mov     $1, %rdx                        # SEEK_CUR
     mov     $__NR_lseek, %rax
     syscall
-    push    %rax                        # Save current position
+    push    %rax                            # Save current position
 
     # Seek to section header offset
     mov     elfobj, %rdi
     mov     ehdr + e_shoff, %rsi
-    xor     %rdx, %rdx                  # SEEK_SET
+    xor     %rdx, %rdx                      # SEEK_SET
     mov     $__NR_lseek, %rax
     syscall
 
@@ -684,7 +478,7 @@ load_elf64_file:
     movzwq  ehdr + e_shnum, %rsi
     imul    $elf64_shdr_size, %rsi
     mov     %rsi, shdr_size
-    xor     %rdi, %rdi                  # NULL
+    xor     %rdi, %rdi                 
     mov     $(PROT_READ | PROT_WRITE), %rdx
     mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
     mov     $-1, %r8
@@ -720,6 +514,67 @@ load_elf64_file:
     pop     %rdi
     mov     %rbp, %rsp
     pop     %rbp
+    ret
+
+# We preload the string table. We need this for printing
+# the section information.
+# No input. This just must be called AFTER load_elf64_file
+load_shstrtab:
+    push   %rbp
+    mov    %rsp, %rbp
+    push   %r13
+    push   %r12
+
+    movzw  ehdr + e_shstrndx, %rax
+    imul   $elf64_shdr_size, %rax
+    mov    shdr, %rdx
+    add    %rax, %rdx
+
+    mov    sh_offset(%rdx), %r13
+    mov    sh_size(%rdx), %r12
+
+    xor    %rdi, %rdi
+    mov    %r12, %rsi
+    mov    $(PROT_READ | PROT_WRITE), %rdx
+    mov    $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
+    mov    $-1, %r8
+    xor    %r9, %r9
+    mov    $__NR_mmap, %rax
+    syscall
+
+    cmp    $-1, %rax
+    je     .L_mmap_error
+    mov    %rax, shstrtab
+
+    # Seek to the string table offset
+    mov    elfobj, %rdi
+    mov    %r13, %rsi                       # Use sh_offset for seeking
+    xor    %rdx, %rdx
+    mov    $__NR_lseek, %rax
+    syscall
+
+    # Read the string table
+    mov    elfobj, %rdi
+    mov    shstrtab, %rsi
+    mov    %r12, %rdx                       # Use sh_size for reading
+    mov    $__NR_read, %rax
+    syscall
+
+    cmp    %r12, %rax
+    jne    .L_read_error
+
+    mov    shstrtab, %rax
+    jmp    .L_cleanup
+
+.L_mmap_error:
+.L_read_error:
+    mov    $-1, %rax
+
+.L_cleanup:
+    pop    %r12
+    pop    %r13
+    mov    %rbp, %rsp
+    pop    %rbp
     ret
 
 # We will read in the ehdr and verify portions of e_ident
@@ -1035,13 +890,13 @@ parse_elf64_ehdr:
 parse_elf64_phdr:
    lea     elfparse_str_phdr, %rdi
    call    print_str
-   xor     %rcx, %rcx               # our index into phdr
-   movzw   ehdr + e_phnum, %rbx     # holds e_phnum value
+   xor     %rcx, %rcx                       # our index into phdr
+   movzw   ehdr + e_phnum, %rbx             # holds e_phnum value
 .L_loop_section:
    cmp     %rcx, %rbx
    je      .L_exit_parse_phdr
    
-   mov     %rcx, %rax               # below we are essentially doing phdr[X].p_type where X = %rcx
+   mov     %rcx, %rax                       # below we are essentially doing phdr[X].p_type where X = %rcx
    imul    $elf64_phdr_size, %rax
    mov     phdr, %rdx
    add     %rax, %rdx
@@ -1184,3 +1039,155 @@ parse_elf64_sections:
 .L_exit_parse_sections:
    xor     %rax, %rax
    ret
+
+# ---------- Utility Functions ----------
+
+# Each function should return:
+# success: %rax = 0
+# failure: %rax = -1
+#
+# This is checked in the main .L_elfparse_args
+# loop that iterates through the functions and
+# prints error messages based on the return value 
+print_str:
+    # Print a string to STDOUT = 1
+    # %rdi holds the address of the string
+    #
+    # We need to find the length of the string first and then print using
+    # syscall __NR_write (sys_write) 
+    push   %rcx
+    push   %rax
+    push   %rdx
+
+    xor    %rcx, %rcx
+.L_strlen:
+    movb   (%rdi, %rcx), %al
+    test   %al, %al
+    jz     .L_write
+    inc    %rcx
+    jmp    .L_strlen
+.L_write:
+    # At this point %rcx holds the length of the null terminated string
+    mov    %rcx, %rdx
+    mov    %rdi, %rsi
+    mov    $STDOUT, %rdi
+    mov    $__NR_write, %rax
+    syscall
+
+    pop    %rdx
+    pop    %rax
+    pop    %rcx
+    ret
+
+# String comparison utility function
+# %rdi string1
+# %rsi string2
+# %rax is return
+str_cmp:
+    xor    %rax, %rax
+.L_str_cmp_loop:
+    # Move a byte from the currently index %rdi and %rsi and compare them
+    # if they don't match then we don't have the same string.
+    mov    (%rdi), %cl
+    cmp    (%rsi), %cl
+    jne    .L_str_cmp_end
+    test   %cl, %cl                         # Test for null terminator (end of string)
+    jz     .L_str_cmp_end
+    inc    %rdi
+    inc    %rsi
+    jmp    .L_str_cmp_loop
+.L_str_cmp_end:
+    # If strings are equal then we will return 0 else positive or negative
+    # depending which string is. We only care about testing 0 for the return.
+    movzx  (%rdi), %rax
+    movzx  (%rsi), %rcx
+    sub    %rcx, %rax
+    ret
+
+# label is misleading its uint64_to_hex_string
+# Converts our uint64_t addresses to a string
+# %rsi the address to convert
+# %rdi the output buffer
+uint64_to_hex:
+    push   %rbp
+    mov    %rsp, %rbp
+    push   %rbx
+    push   %rdx
+    push   %rcx
+    push   %rax
+    push   %rdi
+
+    mov    $15, %ecx                        # Start with the rightmost character
+    mov    %rsi, %rax
+
+.L_convert:
+    mov    %rax, %rdx
+    and    $0xf, %rdx                       # Get least significant nibble
+    cmp    $10, %rdx
+    jae    .L_letter
+
+    add    $'0', %rdx                       # Convert to ASCII number
+    jmp    .L_save
+
+.L_letter:
+    add    $('A' - 10), %rdx                # Convert to ASCII letter (A-F)
+
+.L_save:
+    mov    %dl, (%rdi, %rcx)                # Store ASCII char in buffer
+    shr    $4, %rax                         # Shift out the processed nibble
+    dec    %ecx
+    jns    .L_convert
+
+    pop    %rdi
+    pop    %rax
+    pop    %rcx
+    pop    %rdx
+    pop    %rbx
+    pop    %rbp
+    ret
+
+# Convert unsigned 64-bit integer to ASCII
+# %rax = integer
+# %rsi = buffer pointer
+uint64_to_ascii:
+    push   %rbp
+    mov    %rsp, %rbp
+    push   %rbx
+    push   %r12
+    mov    %rsi, %rbx                       # Save original buffer pointer
+    mov    $10, %rcx
+    add    $20, %rsi                        # Move to end of buffer
+    mov    %rsi, %r12                       # Save end of buffer pointer
+
+    # Null-terminate the string
+    movb   $0, (%rsi)
+
+.L_convert_digit:
+    xor    %rdx, %rdx
+    div    %rcx                             # Divide rax by 10
+    add    $'0', %dl                        # Convert remainder to ASCII
+    dec    %rsi
+    mov    %dl, (%rsi)                      # Store ASCII char
+    test   %rax, %rax
+    jnz    .L_convert_digit
+
+    # Move the string to the beginning of the buffer if necessary
+    cmp    %rbx, %rsi
+    je     .L_done_to_ascii
+
+    # Inline string move
+    mov    %rsi, %rcx                       # Source
+    mov    %rbx, %rdx                       # Destination
+.L_strcpy:
+    movb   (%rcx), %al
+    movb   %al, (%rdx)
+    inc    %rcx
+    inc    %rdx
+    cmp    %r12, %rcx
+    jle    .L_strcpy
+
+.L_done_to_ascii:
+    pop    %r12
+    pop    %rbx
+    pop    %rbp
+    ret

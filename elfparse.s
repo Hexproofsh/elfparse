@@ -3,6 +3,11 @@
 #
 # Usage: elfparse [file]
 #
+# Assemble: as --elf64 -o elfparse.o elfparse.s
+#           ld -o elfparse elfparse.o
+#
+# or just run make
+#
 # (C) Copyright 2024 Travis Montoya <trav@hexproof.sh>
 #
 # This program is free software: you can redistribute it and/or modify it under 
@@ -36,7 +41,6 @@
 .set __NR_write,     1
 .set __NR_open,      2
 .set __NR_close,     3
-.set __NR_fstat,     5
 .set __NR_lseek,     8
 .set __NR_mmap,      9
 .set __NR_munmap,    11
@@ -207,6 +211,7 @@ elfparse_invalid_file:
 elfverify_read_error:
     .asciz "Error: Unable to read ELF64 header\n"
 
+# ------------ Uninitialized data ------------
 .lcomm shstrtab, 8
 .lcomm elfobj, 8
 .lcomm hexbuff, 17
@@ -338,11 +343,11 @@ print_str:
     pop    %rcx
     ret
 
+# label is misleading its uint64_to_hex_string
+# Converts our uint64_t addresses to a string
+# %rsi the address to convert
+# %rdi the output buffer
 uint64_to_hex:
-    # label is misleading its uint64_to_hex_string
-    # Converts our uint64_t addresses to a string
-    # %rsi the address to convert
-    # %rdi the output buffer
     push   %rbp
     mov    %rsp, %rbp
     push   %rbx
@@ -380,10 +385,10 @@ uint64_to_hex:
     pop    %rbp
     ret
 
+# Convert unsigned 64-bit integer to ASCII
+# %rax = integer
+# %rsi = buffer pointer
 uint64_to_ascii:
-    # Convert unsigned 64-bit integer to ASCII
-    # %rax = integer
-    # %rsi = buffer pointer
     push   %rbp
     mov    %rsp, %rbp
     push   %rbx
@@ -426,6 +431,9 @@ uint64_to_ascii:
     pop    %rbp
     ret
 
+# We preload the string table. We need this for printing
+# the section information.
+# No input. This just must be called AFTER load_elf64_file
 load_shstrtab:
     push   %rbp
     mov    %rsp, %rbp
@@ -480,126 +488,132 @@ load_shstrtab:
     pop    %rbp
     ret
 
+# Read in the ehdr, phdr and shdr of the binary
+# %rdi contains the address of the file name
+#
+# If this function succeeds the elfobj variable
+# will be a valid file handle and this returns
+# success (0) else we return failrue (-1) and
+# elfobj is invalid. 
+#
+# This could have been written better, especially since I overcomplicated it by
+# mmap/reading each section separately. We should have just fstat the file and
+# mapped the entire file to memory.
 load_elf64_file:
-   # Read in the ehdr, phdr and shdr of the binary
-   # %rdi contains the address of the file name
-   #
-   # If this function succeeds the elfobj variable
-   # will be a valid file handle and this returns
-   # success (0) else we return failrue (-1) and
-   # elfobj is invalid. 
-   push    %rbp
-   mov     %rsp, %rbp
-   push    %rsi
+    push    %rbp
+    mov     %rsp, %rbp
+    push    %rsi
 
-   # __NR_open
-   mov     $O_RDONLY, %rsi
-   xor     %rdx, %rdx
-   mov     $__NR_open, %rax
-   syscall
-   cmp     $0, %rax
-   jl      .L_load_error
+    mov     $O_RDONLY, %rsi
+    xor     %rdx, %rdx
+    mov     $__NR_open, %rax
+    syscall
+    cmp     $0, %rax
+    jl      .L_load_error
 
-   mov     %rax, elfobj                 # save file handle to elfobj
+    mov     %rax, elfobj                 # save file handle to elfobj
 
-   # Read in ehdr
-   mov     %rax, %rdi
-   lea     ehdr, %rsi
-   mov     $elf64_ehdr_size, %rdx
-   mov     $__NR_read, %rax
-   syscall
-   cmp     $elf64_ehdr_size, %rax
-   jne     .L_load_error
+    # Read in ehdr
+    mov     %rax, %rdi
+    lea     ehdr, %rsi
+    mov     $elf64_ehdr_size, %rdx
+    mov     $__NR_read, %rax
+    syscall
+    cmp     $elf64_ehdr_size, %rax
+    jne     .L_load_error
 
-   call    verify_elf64_file
-   cmp     $0, %rax
-   jne     .L_load_error
+    call    verify_elf64_file
+    cmp     $0, %rax
+    jne     .L_load_error
 
-   # mmap for program headers
-   movzwq  ehdr + e_phnum, %rsi
-   imul    $elf64_phdr_size, %rsi      # e_phnum * sizeof(Elf64_Phdr)
-   mov     %rsi, phdr_size
-   xor     %rdi, %rdi                  # NULL
-   mov     $(PROT_READ | PROT_WRITE), %rdx
-   mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
-   mov     $-1, %r8
-   xor     %r9, %r9
-   mov     $__NR_mmap, %rax
-   syscall
-   cmp     $-1, %rax
-   je      .L_load_error
-   mov     %rax, phdr
+    # mmap for program headers
+    movzwq  ehdr + e_phnum, %rsi
+    imul    $elf64_phdr_size, %rsi      # e_phnum * sizeof(Elf64_Phdr)
+    mov     %rsi, phdr_size
+    xor     %rdi, %rdi                
+    mov     $(PROT_READ | PROT_WRITE), %rdx
+    mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
+    mov     $-1, %r8
+    xor     %r9, %r9
+    mov     $__NR_mmap, %rax
+    syscall
+    cmp     $-1, %rax
+    je      .L_load_error
+    mov     %rax, phdr
 
-   # Read program headers
-   mov     elfobj, %rdi
-   mov     phdr, %rsi                 
-   mov     phdr_size, %rdx
-   mov     $__NR_read, %rax
-   syscall
-   cmp     phdr_size, %rax             
-   jne     .L_load_error
+    # Read program headers
+    mov     elfobj, %rdi
+    mov     phdr, %rsi                 
+    mov     phdr_size, %rdx
+    mov     $__NR_read, %rax
+    syscall
+    cmp     phdr_size, %rax             
+    jne     .L_load_error
 
-   # Save current file position
-   mov     elfobj, %rdi
-   xor     %rsi, %rsi
-   mov     $1, %rdx                    # SEEK_CUR
-   mov     $__NR_lseek, %rax
-   syscall
-   push    %rax                        # Save current position
+    # Save current file position
+    mov     elfobj, %rdi
+    xor     %rsi, %rsi
+    mov     $1, %rdx                    # SEEK_CUR
+    mov     $__NR_lseek, %rax
+    syscall
+    push    %rax                        # Save current position
 
-   # Seek to section header offset
-   mov     elfobj, %rdi
-   mov     ehdr + e_shoff, %rsi
-   xor     %rdx, %rdx                  # SEEK_SET
-   mov     $__NR_lseek, %rax
-   syscall
+    # Seek to section header offset
+    mov     elfobj, %rdi
+    mov     ehdr + e_shoff, %rsi
+    xor     %rdx, %rdx                  # SEEK_SET
+    mov     $__NR_lseek, %rax
+    syscall
 
-   # mmap for section headers
-   movzwq  ehdr + e_shnum, %rsi
-   imul    $elf64_shdr_size, %rsi
-   mov     %rsi, shdr_size
-   xor     %rdi, %rdi                  # NULL
-   mov     $(PROT_READ | PROT_WRITE), %rdx
-   mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
-   mov     $-1, %r8
-   xor     %r9, %r9
-   mov     $__NR_mmap, %rax
-   syscall
-   cmp     $-1, %rax
-   je      .L_load_error
-   mov     %rax, shdr
+    # mmap for section headers
+    movzwq  ehdr + e_shnum, %rsi
+    imul    $elf64_shdr_size, %rsi
+    mov     %rsi, shdr_size
+    xor     %rdi, %rdi                  # NULL
+    mov     $(PROT_READ | PROT_WRITE), %rdx
+    mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
+    mov     $-1, %r8
+    xor     %r9, %r9
+    mov     $__NR_mmap, %rax
+    syscall
+    cmp     $-1, %rax
+    je      .L_load_error
+    mov     %rax, shdr
 
-   # Read section headers
-   mov     elfobj, %rdi
-   mov     shdr, %rsi                  
-   mov     shdr_size, %rdx
-   mov     $__NR_read, %rax
-   syscall
-   cmp     shdr_size, %rax           
-   jne     .L_load_error
+    # Read section headers
+    mov     elfobj, %rdi
+    mov     shdr, %rsi                  
+    mov     shdr_size, %rdx
+    mov     $__NR_read, %rax
+    syscall
+    cmp     shdr_size, %rax           
+    jne     .L_load_error
 
-   mov     elfobj, %rdi
-   pop     %rsi
-   xor     %rdx, %rdx  
-   mov     $__NR_lseek, %rax
-   syscall
+    mov     elfobj, %rdi
+    pop     %rsi
+    xor     %rdx, %rdx  
+    mov     $__NR_lseek, %rax
+    syscall
 
-   mov     $0, %rax
-   jmp     .L_load_cleanup
+    mov     $0, %rax
+    jmp     .L_load_cleanup
 
 .L_load_error:
-   mov     $-1, %rax
+    mov     $-1, %rax
 
 .L_load_cleanup:
-   pop     %rdi
-   mov     %rbp, %rsp
-   pop     %rbp
-   ret
+    pop     %rdi
+    mov     %rbp, %rsp
+    pop     %rbp
+    ret
 
+# We will read in the ehdr and verify portions of e_ident
+# ehdr is already loaded by load_elf64_file
+# Verify magic bytes "\177ELF" and EI_CLASS being ELFCLASS64. We do this because
+# we are only dealing with elf64_* headers.
+#
+# This is called from inside load_elf64_file
 verify_elf64_file:
-   # We will read in the ehdr and verify portions of e_ident
-   # ehdr is already loaded by load_elf64_file
-   # Verify magic bytes "\177ELF"
    lea     ehdr, %rcx
    cmpb    $ELFMAG0, elf64_ehdr + e_ident + EI_MAG0(%rcx)
    jne     .L_verify_error
@@ -610,8 +624,6 @@ verify_elf64_file:
    cmpb    $ELFMAG3, elf64_ehdr + e_ident + EI_MAG3(%rcx)
    jne     .L_verify_error
 
-   # This is an ELF64 utility that uses ELF64 headers so
-   # we need to make sure this is ELFCLASS64
    cmpb    $ELFCLASS64, elf64_ehdr + e_ident + EI_CLASS(%rcx)
    jne     .L_verify_error
 
@@ -624,6 +636,11 @@ verify_elf64_file:
    mov     $-1, %rax
    ret
 
+# Parse the elf64_ehdr structure. This structure gives us further information
+# for processing the rest of the file. 
+#
+# This is called from the main .L_elfparse_args section. elf64_load_file must
+# already have been called.
 parse_elf64_ehdr:
    # Print the different fields of the Elf64_Ehdr structure
    # ehdr has already been read in by verify_elf64_file
@@ -789,6 +806,7 @@ parse_elf64_ehdr:
 
 .L_print_file_version:
 
+   # Print the EI_VERSION of e_ident (File version)
    lea     elfparse_str_filever, %rdi
    call    print_str
 
@@ -896,10 +914,10 @@ parse_elf64_ehdr:
    mov     $0, %rax
    ret
 
+# Parse the Program header information. Iterate each phdr
+# and print out sections and offset. PT_INTERP we print
+# the interpreter
 parse_elf64_phdr:
-   # Parse the Program header information. Iterate each phdr
-   # and print out sections and offset. PT_INTERP we print
-   # the interpreter
    lea     elfparse_str_phdr, %rdi
    call    print_str
    xor     %rcx, %rcx            # our index into phdr
@@ -928,6 +946,7 @@ parse_elf64_phdr:
    # Any other section we just loop
    inc     %rcx
    jmp     .L_loop_section
+
 .L_print_phdr_addr:
    # This prints out the phdr[i].p_vaddr
    mov     p_vaddr(%rdx), %rsi
@@ -937,6 +956,7 @@ parse_elf64_phdr:
    call    print_str
    inc     %rcx
    jmp     .L_loop_section
+
 .L_print_ptload:
    # Print out PT_LOAD .text and .data segment addresses
    mov     p_offset(%rdx), %r10
@@ -945,18 +965,22 @@ parse_elf64_phdr:
    lea     elfparse_str_ptloaddat, %rdi
    call    print_str
    jmp     .L_print_phdr_addr
+
 .L_ptload_text:
    lea     elfparse_str_ptloadtxt, %rdi
    call    print_str
    jmp     .L_print_phdr_addr
+
 .L_print_ptdyn:
    lea     elfparse_str_dynseg, %rdi
    call    print_str
    jmp     .L_print_phdr_addr
+
 .L_print_ptnote:
    lea     elfparse_str_noteseg, %rdi
    call    print_str
    jmp     .L_print_phdr_addr
+
 .L_print_ptinterp:
    # If there is a PT_INTERP we print the interpreter
    lea     elfparse_str_interp, %rdi
@@ -987,14 +1011,20 @@ parse_elf64_phdr:
    pop     %rcx
    inc     %rcx
    jmp     .L_loop_section
+
 .L_print_ptphdr:
    lea     elfparse_str_progseg, %rdi
    call    print_str
    jmp     .L_print_phdr_addr
+
 .L_exit_parse_phdr:
    xor     %rax, %rax
    ret
 
+# Print out the section names and addresses in the supplied ELF file
+# load_elf64_file and load_shstrtab must have already been called
+# 
+# The variable shstrtab holds the symbol table
 parse_elf64_sections:
    lea     elfparse_str_shdr, %rdi
    call    print_str

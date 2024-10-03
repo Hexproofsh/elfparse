@@ -31,9 +31,15 @@ ELF Header:
   Section header count: 31
   Section header string table index: 30
 Program headers:
-  Interpreter: 
-  Dynamic segment: 0x00000000000003B0
-  .text    0x6FFFFFFF00000071
+  Program segment: 0x0000000000000040
+  Interpreter: /lib64/ld-linux-x86-64.so.2
+  .text    0x0000000000000000
+  .data    0x0000000000001000
+  .data    0x0000000000002000
+  .data    0x0000000000003DA8
+  Dynamic segment: 0x0000000000003DB8
+  Note segment: 0x0000000000000338
+  Note segment: 0x0000000000000368
 Section headers:
   .interp    0x0000000000000318
   .note.gnu.property    0x0000000000000338

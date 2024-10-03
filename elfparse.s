@@ -85,7 +85,7 @@
 .set PT_DYNAMIC,     2
 .set PT_INTERP,      3
 .set PT_NOTE,        4
-.set PT_PHDR,        5
+.set PT_PHDR,        6
 
 # ------------ ELF Structures ------------
  
@@ -213,11 +213,11 @@ elfverify_read_error:
 .lcomm intbuff, 21
 .lcomm interp_path, 256
 
-# These are initialized in .bss
+# We don't mmap ehdr, but phdr, shdr are pointers returned from mmap
 .lcomm ehdr, elf64_ehdr_size
-.lcomm phdr, elf64_phdr_size
+.lcomm phdr, 8
 .lcomm phdr_size, 8
-.lcomm shdr, elf64_shdr_size
+.lcomm shdr, 8
 .lcomm shdr_size, 8
 
 # ------------ Text ------------
@@ -432,7 +432,7 @@ load_shstrtab:
 
     movzwl ehdr + e_shstrndx, %eax
     imul   $elf64_shdr_size, %rax
-    lea    shdr, %rdx
+    mov    shdr, %rdx
     add    %rax, %rdx
     
     mov    sh_offset(%rdx), %r13 
@@ -515,56 +515,51 @@ load_elf64_file:
    cmp     $0, %rax
    jne     .L_load_error
 
-   # We have loaded ehdr and verified that the file is a valid
-   # ELF64 file. We need to mmap our phdr and shdr values now.
+   # mmap for program headers
    movzwq  ehdr + e_phnum, %rsi
-   imul    $elf64_phdr_size, %rsi      # Basically e_phnum * sizeof(Elf64_Phdr)
-   push    %rsi                        # Save the size for reading to the address
+   imul    $elf64_phdr_size, %rsi      # e_phnum * sizeof(Elf64_Phdr)
    mov     %rsi, phdr_size
-
-   mov     %rsi, %rdx
-   xor     %rdi, %rdi
-   mov     $(PROT_READ | PROT_WRITE), %rsi
+   xor     %rdi, %rdi                  # NULL
+   mov     $(PROT_READ | PROT_WRITE), %rdx
    mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
    mov     $-1, %r8
    xor     %r9, %r9
    mov     $__NR_mmap, %rax
    syscall
-
    cmp     $-1, %rax
    je      .L_load_error
-
    mov     %rax, phdr
 
-   # Read in the program headers to the allocated memory
+   # Read program headers
    mov     elfobj, %rdi
-   lea     phdr, %rsi
-   pop     %rdx
+   mov     phdr, %rsi                 
+   mov     phdr_size, %rdx
    mov     $__NR_read, %rax
    syscall
- 
+   cmp     phdr_size, %rax             
+   jne     .L_load_error
+
    # Save current file position
    mov     elfobj, %rdi
    xor     %rsi, %rsi
-   mov     $1, %rdx     
+   mov     $1, %rdx                    # SEEK_CUR
    mov     $__NR_lseek, %rax
    syscall
-   push    %rax            # Save current position
+   push    %rax                        # Save current position
 
    # Seek to section header offset
    mov     elfobj, %rdi
    mov     ehdr + e_shoff, %rsi
-   xor     %rdx, %rdx      # SEEK_SET
+   xor     %rdx, %rdx                  # SEEK_SET
    mov     $__NR_lseek, %rax
    syscall
-   
+
+   # mmap for section headers
    movzwq  ehdr + e_shnum, %rsi
    imul    $elf64_shdr_size, %rsi
-   push    %rsi
    mov     %rsi, shdr_size
-   mov     %rsi, %rdx
-   xor     %rdi, %rdi
-   mov     $(PROT_READ | PROT_WRITE), %rsi
+   xor     %rdi, %rdi                  # NULL
+   mov     $(PROT_READ | PROT_WRITE), %rdx
    mov     $(MAP_PRIVATE | MAP_ANONYMOUS), %r10
    mov     $-1, %r8
    xor     %r9, %r9
@@ -573,12 +568,15 @@ load_elf64_file:
    cmp     $-1, %rax
    je      .L_load_error
    mov     %rax, shdr
- 
+
+   # Read section headers
    mov     elfobj, %rdi
-   lea     shdr, %rsi    
-   pop     %rdx
+   mov     shdr, %rsi                  
+   mov     shdr_size, %rdx
    mov     $__NR_read, %rax
    syscall
+   cmp     shdr_size, %rax           
+   jne     .L_load_error
 
    mov     elfobj, %rdi
    pop     %rsi
@@ -912,7 +910,7 @@ parse_elf64_phdr:
    
    mov     %rcx, %rax
    imul    $elf64_phdr_size, %rax
-   lea     phdr, %rdx
+   mov     phdr, %rdx
    add     %rax, %rdx
    mov     p_type(%rdx), %eax
    
@@ -1014,7 +1012,7 @@ parse_elf64_sections:
 
    mov     %rcx, %rax
    imul    $elf64_shdr_size, %rax
-   lea     shdr, %rdx
+   mov     shdr, %rdx
    add     %rax, %rdx
 
    mov     shstrtab, %rdi

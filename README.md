@@ -12,6 +12,8 @@ usage: elfparse <option(s)> [file]
   -p       prints program header information
   -s       prints section names and addresses
 
+When using '-a' it cannot be combined with other arguments
+
 See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh
 ```
 

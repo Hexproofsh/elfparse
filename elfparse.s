@@ -18,7 +18,7 @@
 # This program is distributed in the hope that it will be useful, but WITHOUT 
 # ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS 
 # FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-
+#
 # You should have received a copy of the GNU General Public License along with 
 # this program. If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
@@ -152,7 +152,9 @@ elfparse_usage:
     .ascii "  -a       all - prints header, program headers, sections\n"
     .ascii "  -h       prints the elf header\n"
     .ascii "  -p       prints program header information\n"
-    .ascii "  -s       prints section names and addresses\n\n"
+    .ascii "  -s       prints section names and addresses\n"
+    .ascii "  -y       prints the symbol table\n"
+    .ascii "  -v       print the version information of elfparse\n\n"
     .ascii "When using '-a' it cannot be combined with other arguments\n\n"
     .asciz "See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh\n"
 
@@ -162,6 +164,15 @@ option_h: .asciz "-h"
 option_p: .asciz "-p"
 option_s: .asciz "-s"
 option_d: .asciz "-d"
+option_y: .asciz "-y"
+option_v: .asciz "-v"
+
+elfparse_version:
+    .ascii "GNU ELF64 parser (elfparse) version 1.01\n"
+    .ascii "(C) Copyright 2024 hexproof.sh\n"
+    .ascii "This program is free software; you may redistribute it under the terms of\n"
+    .ascii "the GNU General Public License version 3 or (at your option) any later version.\n"
+    .asciz "This program has absolutely no warranty.\n"
 
 elfparse_verify_valid:
     .asciz "Binary is a valid 64-BIT ELF file\n"
@@ -263,9 +274,21 @@ elfparse_see_usage:
 
 _start:
     mov    (%rsp), %r12                     # %rsp = argc
+    cmp    $2, %r12
+    je     .L_check_arg_version
+
     cmp    $3, %r12                         # We should have atleast 2 command line arg
     jl     .L_elfparse_usage 
+    jmp    .L_elfparse_args
 
+.L_check_arg_version:
+   lea     16(%rsp), %r13
+   mov     (%r13), %rdi
+   lea     option_v, %rsi
+   call    str_cmp
+   test    %eax, %eax
+   jz      .L_print_version
+   jmp     .L_elfparse_usage
 .L_elfparse_args:
     # Our usage allows us to specifiy any of the arguments in any order to print out
     # various info about the ELF file. The only exception is -a can be the only option
@@ -357,7 +380,10 @@ _start:
    
     # Print section information
     call   parse_elf64_sections
-
+    jmp    .L_elfparse_exit
+.L_print_version:
+    lea    elfparse_version, %rdi
+    call   print_str
 .L_elfparse_exit:
     mov    phdr, %r10
     test   %r10, %r10

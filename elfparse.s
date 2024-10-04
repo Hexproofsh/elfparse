@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # elfparse.s - GNU ELF64 Parser
 #
-# Usage: elfparse [file]
+# Usage: elfparse <option(s)> [file]
 #
 # Assemble: as --elf64 -o elfparse.o elfparse.s
 #           ld -o elfparse elfparse.o
@@ -1080,28 +1080,22 @@ print_str:
     ret
 
 # String comparison utility function
+# %rcx is length to check, we use 2 because all options are 2 letters
 # %rdi string1
 # %rsi string2
 # %rax is return
 str_cmp:
-    xor    %rax, %rax
-.L_str_cmp_loop:
-    # Move a byte from the currently index %rdi and %rsi and compare them
-    # if they don't match then we don't have the same string.
-    mov    (%rdi), %cl
-    cmp    (%rsi), %cl
-    jne    .L_str_cmp_end
-    test   %cl, %cl                         # Test for null terminator (end of string)
-    jz     .L_str_cmp_end
-    inc    %rdi
-    inc    %rsi
-    jmp    .L_str_cmp_loop
-.L_str_cmp_end:
-    # If strings are equal then we will return 0 else positive or negative
-    # depending which string is. We only care about testing 0 for the return.
-    movzx  (%rdi), %rax
-    movzx  (%rsi), %rcx
-    sub    %rcx, %rax
+    push    %rcx
+    cld
+    mov     $2, %rcx
+    repe    cmpsb
+    jne     .L_str_cmp_ne
+    xor     %rax, %rax
+    pop     %rcx
+    ret
+.L_str_cmp_ne:
+    pop     %rcx
+    mov     $-1, %rax
     ret
 
 # label is misleading its uint64_to_hex_string

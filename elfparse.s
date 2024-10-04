@@ -153,6 +153,7 @@ elfparse_usage:
     .ascii "  -h       prints the elf header\n"
     .ascii "  -p       prints program header information\n"
     .ascii "  -s       prints section names and addresses\n\n"
+    .ascii "When using '-a' it cannot be combined with other arguments\n\n"
     .asciz "See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh\n"
 
 # Program options for parsing the command line
@@ -160,6 +161,7 @@ option_a: .asciz "-a"
 option_h: .asciz "-h"
 option_p: .asciz "-p"
 option_s: .asciz "-s"
+option_d: .asciz "-d"
 
 elfparse_verify_valid:
     .asciz "Binary is a valid 64-BIT ELF file\n"
@@ -229,6 +231,12 @@ elfparse_invalid_file:
 elfverify_read_error:
     .asciz "Error: Unable to read ELF64 header\n"
 
+elfparse_invalid_option:
+    .asciz "\nError: Invalid option detected or in wrong position: "
+
+elfparse_see_usage:
+    .asciz "\nRun 'elfparse' without any arguments to see usage\n"
+
 # ------------ Uninitialized data ------------
 
 .lcomm shstrtab,    8
@@ -281,13 +289,17 @@ _start:
     test   %rax, %rax
     jl     .L_elfparse_error
 
-    # -a will print out all data so we will handle it and then exit if it is found
+    cmp    $3, %r12                         # If we have more than 3 arguments jump to parsing the valid
+    jg     .L_init_opt_parsing              # ones that can have more than one argument. Option -a and -d
+                                            # cannot be combined with other arguments.
     mov    (%r13), %rdi
     lea    option_a, %rsi
     call   str_cmp
     test   %eax, %eax
     jz     .L_print_all_data
-    
+
+.L_init_opt_parsing:
+    dec    %r12                             # We don't need to parse the filename
     mov    $1, %r15                         # %r15 will hold the option counter and we use $1 to bypass program name    
 .L_parse_options:
     cmp    %r12, %r15
@@ -320,7 +332,7 @@ _start:
     test   %eax, %eax
     jz     .L_print_shdr_data
 
-    jmp    .L_elfparse_exit
+    jmp    .L_elfparse_option_error
 
 .L_print_ehdr_data:
     call   parse_elf64_ehdr
@@ -345,6 +357,7 @@ _start:
    
     # Print section information
     call   parse_elf64_sections
+
 .L_elfparse_exit:
     mov    phdr, %r10
     test   %r10, %r10
@@ -389,7 +402,16 @@ _start:
     lea    elfparse_usage, %rdi
     call   print_str
     jmp    .L_elfparse_exit
- 
+
+.L_elfparse_option_error:
+    lea    elfparse_invalid_option, %rdi
+    call   print_str
+    mov    %r10, %rdi
+    call   print_str
+    lea    elfparse_see_usage, %rdi
+    call   print_str
+    jmp    .L_elfparse_exit
+
 # ------------ Elf Parser Functions  ------------ 
 
 # Read in the ehdr, phdr and shdr of the binary

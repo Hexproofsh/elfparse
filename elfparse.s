@@ -142,6 +142,17 @@ elf64_shdr:
     .align 8
 elf64_shdr_size:
 
+.struct 0
+elf64_sym:
+    .struct elf64_sym
+    st_name:  .space 4
+    st_info:  .space 1
+    st_other: .space 1 
+    st_shndx: .space 2
+    st_value: .space 8
+    st_size:  .space 8
+elf64_sym_size:
+
 # ------------ Initialized data ------------
 
     .section .data
@@ -149,13 +160,13 @@ elf64_shdr_size:
 elfparse_usage:
     .ascii "GNU ELF64 Parser\n"
     .ascii "usage: elfparse <option(s)> [file]\n"
-    .ascii "  -a       all - prints header, program headers, sections\n"
-    .ascii "  -h       prints the elf header\n"
-    .ascii "  -p       prints program header information\n"
-    .ascii "  -s       prints section names and addresses\n"
-    .ascii "  -y       prints the symbol table\n"
-    .ascii "  -v       print the version information of elfparse\n\n"
-    .ascii "When using '-a' it cannot be combined with other arguments\n\n"
+    .ascii "  -a            all - prints header, program headers, sections, symbol table\n"
+    .ascii "  -h            prints the elf header\n"
+    .ascii "  -p            prints program header information\n"
+    .ascii "  -s            prints section names and addresses\n"
+    .ascii "  -y            prints the symbol table\n"
+    .ascii "  -v            print the version information of elfparse\n\n"
+    .ascii "When using '-a' or '-v' it cannot be combined with other arguments\n\ni"
     .asciz "See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh\n"
 
 # Program options for parsing the command line
@@ -231,9 +242,11 @@ elfparse_str_interp:    .asciz "\n  Interpreter: "
 
 # Section header messages. We use *shdr_beg to begin the line to give the
 # section name some space and then *shdr_space to print before the p_vaddr
-elfparse_str_shdr:      .asciz "\nSection headers:"
-elfparse_str_shdr_beg:  .asciz "\n  "
+elfparse_str_shdr:       .asciz "\nSection headers:"
+elfparse_str_shdr_beg:   .asciz "\n  "
 elfparse_str_shdr_space: .asciz "    0x"
+
+elfparse_str_sym:        .asciz "\nSymbol table:"
 
 # Errors
 elfparse_invalid_file:
@@ -355,6 +368,13 @@ _start:
     test   %eax, %eax
     jz     .L_print_shdr_data
 
+    mov    %r10, %rdi
+    push   %rdi
+    lea    option_y, %rsi
+    call   str_cmp
+    test   %eax, %eax
+    jz     .L_print_symbols
+
     jmp    .L_elfparse_option_error
 
 .L_print_ehdr_data:
@@ -381,6 +401,9 @@ _start:
     # Print section information
     call   parse_elf64_sections
     jmp    .L_elfparse_exit
+.L_print_symbols:
+    call   parse_elf64_sym
+    jmp    .L_next_option
 .L_print_version:
     lea    elfparse_version, %rdi
     call   print_str
@@ -1085,6 +1108,12 @@ parse_elf64_sections:
    jmp     .L_loop_sections
  
 .L_exit_parse_sections:
+   xor     %rax, %rax
+   ret
+
+parse_elf64_sym:
+   lea     elfparse_str_sym, %rdi
+   call    print_str
    xor     %rax, %rax
    ret
 

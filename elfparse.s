@@ -90,6 +90,9 @@
 .set PT_NOTE,        4
 .set PT_PHDR,        6
 
+.set SHT_SYMTAB,     2
+.set SHT_DYNSYM,     11
+
 # ------------ ELF Structures ------------
  
 .struct 0
@@ -246,7 +249,9 @@ elfparse_str_shdr:       .asciz "\nSection headers:"
 elfparse_str_shdr_beg:   .asciz "\n  "
 elfparse_str_shdr_space: .asciz "    0x"
 
-elfparse_str_sym:        .asciz "\nSymbol table:"
+elfparse_str_sym:        .asciz "\nSymbols:"
+elfparse_str_sym_space:  .asciz "\n  Table '"
+elfparse_str_sym_espace: .asciz "':\n"
 
 # Errors
 elfparse_invalid_file:
@@ -1114,9 +1119,42 @@ parse_elf64_sections:
 parse_elf64_sym:
    lea     elfparse_str_sym, %rdi
    call    print_str
+   xor     %rbx, %rbx
+   movzwl  ehdr + e_shnum, %ebx             # %ebx contains the count of sections
+   mov     $1, %rcx
+.L_loop_sym_sections:
+   cmp     %ebx, %ecx
+   je      .L_exit_parse_sym
+   mov     %rcx, %rax                       # We are essentially doing shdr[i] where i = %rdx
+   imul    $elf64_shdr_size, %rax
+   mov     shdr, %rdx
+   add     %rax, %rdx
+   cmpl    $SHT_SYMTAB, sh_type(%rdx)
+   je      .L_print_symbols_names
+   cmpl    $SHT_DYNSYM, sh_type(%rdx)
+   je      .L_print_symbols_names
+.L_next_symbol:
+   inc     %rcx
+   jmp     .L_loop_sym_sections
+.L_print_symbols_names: 
+   lea     elfparse_str_sym_space, %rdi
+   call    print_str
+   mov     %rcx, %rax
+   imul    $elf64_shdr_size, %rax
+   mov     shdr, %rdx
+   add     %rax, %rdx
+   mov     shstrtab, %rdi
+   mov     sh_name(%rdx), %esi
+   add     %rsi, %rdi
+   call    print_str
+
+   lea     elfparse_str_sym_espace, %rdi
+   call    print_str
+
+   jmp     .L_next_symbol
+.L_exit_parse_sym:
    xor     %rax, %rax
    ret
-
 # ---------- Utility Functions ----------
 
 # Each function should return:

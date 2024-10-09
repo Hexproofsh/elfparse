@@ -32,6 +32,8 @@
 
 .set PROT_READ,      1
 .set PROT_WRITE,     2
+
+.set MAP_SHARED,     1
 .set MAP_PRIVATE,    2
 .set MAP_ANONYMOUS,  0x20
 
@@ -91,7 +93,11 @@
 .set PT_PHDR,        6
 
 .set SHT_SYMTAB,     2
+.set SHT_STRTAB,     3
+.set SHT_DYNSTR,     3
 .set SHT_DYNSYM,     11
+
+.set STT_FUNC,       2
 
 # ------------ ELF Structures ------------
  
@@ -169,7 +175,7 @@ elfparse_usage:
     .ascii "  -s            prints section names and addresses\n"
     .ascii "  -y            prints the symbol table\n"
     .ascii "  -v            print the version information of elfparse\n\n"
-    .ascii "When using '-a' or '-v' it cannot be combined with other arguments\n\ni"
+    .ascii "When using '-a' or '-v' it cannot be combined with other arguments\n\n"
     .asciz "See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh\n"
 
 # Program options for parsing the command line
@@ -253,6 +259,16 @@ elfparse_str_sym:        .asciz "\nSymbols:"
 elfparse_str_sym_space:  .asciz "\n  Table '"
 elfparse_str_sym_espace: .asciz "':\n"
 
+elfparse_str_strtab:     .asciz ".strtab"
+elfparse_str_dynstr:     .asciz ".dynstr"
+
+colon_space:
+    .asciz ": "
+space:
+    .asciz " "
+newline:
+    .asciz "\n"
+
 # Errors
 elfparse_invalid_file:
     .asciz "Error: Unable to open file\n"
@@ -268,14 +284,32 @@ elfparse_see_usage:
 
 # ------------ Uninitialized data ------------
 
+.align 8
 .lcomm shstrtab,    8
+
 .lcomm elfobj,      8
 .lcomm hexbuff,     17
 .lcomm intbuff,     21
 .lcomm interp_path, 256
+.lcomm func_cnt, 8
+.lcomm symbol_name, 256
 
 # We don't mmap ehdr, but phdr, shdr are pointers returned from mmap
 .lcomm ehdr, elf64_ehdr_size
+
+# These we will hold addresses of where we mmap sections of memory for either symbol tables
+# or program and section headers.
+.align 8
+.lcomm sym, 8
+.lcomm sym_size, 8
+
+.align 8
+.lcomm dynstr, 8
+.lcomm dynstr_size, 8
+
+.align 8
+.lcomm strtab, 8
+.lcomm strtab_size, 8
 
 .align 8
 .lcomm phdr,      8
@@ -407,7 +441,11 @@ _start:
     call   parse_elf64_sections
     jmp    .L_elfparse_exit
 .L_print_symbols:
+    push   %r13                             # parsing symbols modifies our counters so we save
+    push   %r15                             # them to continue processing
     call   parse_elf64_sym
+    pop    %r15
+    pop    %r13
     jmp    .L_next_option
 .L_print_version:
     lea    elfparse_version, %rdi
@@ -580,13 +618,86 @@ load_elf64_file:
     mov     $__NR_lseek, %rax
     syscall
 
-    xor     %rax, %rax
-    jmp     .L_load_cleanup
+    # Lastly we will map in the string tables for strtab and dynstr so we can print symbols
+    xor     %rcx, %rcx
+    movzwl  ehdr + e_shnum, %ebx             # %ebx contains the count of sections
+    mov     $0, %rcx                     
+.L_load_sym_sections:
+    cmp     %ebx, %ecx
+    jge     .L_load_cleanup           
+    mov     %rcx, %rax                       # We are essentially doing shdr[i] where i = %rax
+    imul    $elf64_shdr_size, %rax
+    mov     shdr, %rdx
+    add     %rax, %rdx                       # rdx now points to current section header
+    mov     sh_type(%rdx), %eax              # Load sh_type into eax
+    cmp     $SHT_STRTAB, %eax
+    je      .L_check_section_name
+    cmp     $SHT_SYMTAB, %eax
+    je      .L_strstab_table
+    cmp     $SHT_DYNSYM, %eax
+    je      .L_dynstr_table
+    jmp     .L_loop_next_sym_section
+.L_check_section_name:
+    push    %rcx                    # Save rcx
+    push    %rdx                    # Save rdx (current section header pointer)
 
+    # Get string table address
+    mov     shstrtab, %r10
+    
+    # Calculate string address: strtab + sh_name
+    mov     sh_name(%rdx), %r11d 
+    add     %r10, %r11
+
+    # Compare with .strtab
+    mov     %r11, %rdi             
+    lea     elfparse_str_strtab(%rip), %rsi
+    mov     $7, %rcx
+    call    strn_cmp
+    test    %eax, %eax          
+    jz      .L_strstab_table
+
+    # Compare with .dynstr
+    mov     %r11, %rdi               
+    lea     elfparse_str_dynstr(%rip), %rsi
+    mov     $7, %rcx
+    call    strn_cmp
+    test    %eax, %eax
+    jz      .L_dynstr_table
+
+    # If we're here, it's neither .strtab nor .dynstr
+    pop     %rdx
+    pop     %rcx
+    jmp     .L_loop_next_sym_section 
+.L_loop_next_sym_section:
+    inc     %rcx
+    jmp     .L_load_sym_sections
+.L_strstab_table:
+    mov     sh_size(%rdx), %rsi             
+    mov     sh_offset(%rdx), %r9        
+    mov     $__NR_mmap, %rax
+    mov     $0, %rdi
+    mov     $(PROT_READ | PROT_WRITE), %rdx
+    mov     $MAP_SHARED, %r10
+    mov     elfobj, %r8
+    syscall
+    mov     %rax, strtab
+    jmp     .L_loop_next_sym_section
+.L_dynstr_table:
+    mov     sh_size(%rdx), %rsi              
+    mov     sh_offset(%rdx), %r9          
+    mov     $__NR_mmap, %rax
+    mov     $0, %rdi
+    mov     $(PROT_READ | PROT_WRITE), %rdx
+    mov     $MAP_SHARED, %r10
+    mov     elfobj, %r8
+    syscall
+    mov     %rax, dynstr
+    jmp     .L_loop_next_sym_section
 .L_load_error:
     mov     $-1, %rax
-
+    ret
 .L_load_cleanup:
+    mov     $0, %rax
     pop     %rdi
     mov     %rbp, %rsp
     pop     %rbp
@@ -1136,7 +1247,7 @@ parse_elf64_sym:
 .L_next_symbol:
    inc     %rcx
    jmp     .L_loop_sym_sections
-.L_print_symbols_names: 
+.L_print_symbols_names:
    lea     elfparse_str_sym_space, %rdi
    call    print_str
    mov     %rcx, %rax
@@ -1151,6 +1262,9 @@ parse_elf64_sym:
    lea     elfparse_str_sym_espace, %rdi
    call    print_str
 
+   # At this point we are in a valid symtab or dynsym section. We have printed the section. Now
+   # we need to find the string table for this section and then print the symbols.
+   inc     %rcx
    jmp     .L_next_symbol
 .L_exit_parse_sym:
    xor     %rax, %rax
@@ -1210,6 +1324,22 @@ str_cmp:
     ret
 .L_str_cmp_ne:
     pop     %rcx
+    mov     $-1, %rax
+    ret
+
+# String comparison utility function with variable length checking
+# %rcx is length to check
+# %rdi string1
+# %rsi string2
+# %rax is return
+strn_cmp:
+    cld
+    repe    cmpsb
+    jne     .L_strn_cmp_ne
+    xor     %rax, %rax
+    pop     %rcx
+    ret
+.L_strn_cmp_ne:
     mov     $-1, %rax
     ret
 

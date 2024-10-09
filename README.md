@@ -7,12 +7,14 @@ Usage:
 ```
 GNU ELF64 Parser
 usage: elfparse <option(s)> [file]
-  -a       all - prints header, program headers, sections
-  -h       prints the elf header
-  -p       prints program header information
-  -s       prints section names and addresses
+  -a            all - prints header, program headers, sections, symbol table
+  -h            prints the elf header
+  -p            prints program header information
+  -s            prints section names and addresses
+  -y            prints the symbol table
+  -v            print the version information of elfparse
 
-When using '-a' it cannot be combined with other arguments
+When using '-a' or '-v' it cannot be combined with other arguments
 
 See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh
 ```

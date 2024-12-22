@@ -166,7 +166,7 @@ elfparse_usage:
     .ascii "  -s            prints section names and addresses\n"
     .ascii "  -y            prints the symbol table\n"
     .ascii "  -v            print the version information of elfparse\n\n"
-    .ascii "When using '-a' or '-v' it cannot be combined with other arguments\n\ni"
+    .ascii "When using '-a' or '-v' it cannot be combined with other arguments\n\n"
     .asciz "See 'COPYING' for licensing information. elfparse (C) Copyright 2024 hexproof.sh\n"
 
 # Program options for parsing the command line
